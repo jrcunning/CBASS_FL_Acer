@@ -1,5 +1,6 @@
 ---
-title: "All Acer analysis"
+title: "Tidy PAM data from CBASS runs"
+subtitle: "R/V *Coral Reef II*, October 7-14, 2020"
 output: html_document
 ---
 
@@ -27,16 +28,23 @@ df %>% distinct(nursery, geno) %>% nrow(.)
 ```
 
 ```{r}
-# Tidy PAM data - initial filtering
+# Initial filtering
 dff <- df %>%
+  # Omit rows for one coral that had missing pam data at 32°C
+  filter(!(geno == "ML1" & nursery == "rrt" & max_temp == 32)) %>%
+  # Save raw fvfm in new column
+  mutate(fvfmraw = fvfm) %>%          
   # Make missing values zero (high temp / no signal)
   replace_na(replace = list(fvfm = 0)) %>%      
-  # Omit data for one coral that had missing data at 32°C
-  filter(!(max_temp == 32 & fvfm == 0)) %>%       
-  # Change abnormally high values at high temps to zero
-  mutate(fvfm = if_else(max_temp > 35 & fvfm >= 0.4 & f <= 250, 0, fvfm)) %>%
-  # Discard all values > 0.750
-  filter(fvfm < 0.750)  
+  # Identify problematic data points
+  mutate(problem = case_when(
+    max_temp >= 36 & fvfm >= 0.4 & f <= 250 ~ "abnormally high w/ low Ft",
+    fvfm > 0.750 ~ "abnormally high",
+    TRUE ~ "none")) %>%
+  mutate(fvfm = case_when(
+    problem == "abnormally high w/ low Ft" ~ 0,     # Change abnormally high values at high temps to zero
+    problem == "abnormally high" ~ NA_real_,    # Change all values > 0.750 to NA
+    TRUE ~ fvfm))
 
 # Plot all data points
 ggplot(dff, aes(x = max_temp, y = fvfm)) +
@@ -48,7 +56,7 @@ ggplot(dff, aes(x = max_temp, y = fvfm)) +
 
 # Define function to fit 3-parameter LL model to data and return NULL if fitting error
 ll3 <- function(data) {
-  drm(fvfm ~ max_temp, data = data, 
+  drm(fvfm ~ max_temp, data = drop_na(data, fvfm), 
       fct = LL.3(names = c("hill", "max", "ED50")),
       upperl = c(100, 0.67, NA),
       lowerl = c(NA, 0.66, NA))}
@@ -56,12 +64,12 @@ tryll3 <- possibly(ll3, otherwise = NULL)
 
 # Fit model to each coral, get parameters, fitted values, and residuals
 initmods <- dff %>%
-  nest(data = c(f, fm, fvfm, tank_id, tank_set, max_temp)) %>%
+  nest(data = c(f, fm, fvfm, fvfmraw, tank_id, tank_set, max_temp, problem)) %>%
   # Fit the model to each coral
   mutate(ll3 = map(data, tryll3)) %>%
   # Get model parameters and fitted values/residuals
   mutate(pars = map(ll3, tidy),
-         pred = map2(ll3, data, ~augment(.x, .y)))
+         pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
 
 pars <- initmods %>% 
   select(nursery, geno, pars) %>%
@@ -72,21 +80,25 @@ vals <- initmods %>%
   select(nursery, geno, pred) %>%
   unnest(pred) %>%
   full_join(pars) %>%
+  full_join(dff) %>%
   rename(ed50 = estimate)
 
 
 # Define function to plot raw data, fitted values, and ed50 for each genotype
 plotfits <- function(data) {
   ggplot(data = data, aes(x = max_temp)) +
-    geom_point(aes(y = fvfm, color = .resid > 0.15)) +
-    geom_line(aes(y = .fitted)) +
+    geom_point(aes(y = fvfmraw, color = problem), pch = 4, size = 1.25) +
+    geom_point(aes(y = fvfm), pch = 1, size = 2) +
+    geom_line(data = drop_na(data, .fitted),
+              aes(y = .fitted)) +
     geom_vline(data = distinct(data, geno, ed50), 
                aes(xintercept = ed50), 
                lwd = 0.2, lty = 2) +
     geom_text(data = distinct(data, geno, ed50),
               aes(x = ed50, y = 0.05, label = round(ed50, 2)), 
               hjust = 1, nudge_x = -0.2, size = 3) +
-    facet_wrap(~ geno)
+    facet_wrap(~ geno) +
+    scale_color_manual(values = c("red", "orange", "blue", "black"))
 }
 
 # Plot fits for each nursery
@@ -98,8 +110,9 @@ plotfits(data = filter(vals, nursery == "um"))
 
 # Remove outlier datapoints
 dfff <- vals %>%
-  filter(.resid < 0.15) %>%
-  select(nursery, geno, f, fm, fvfm, tank_id, tank_set, max_temp)
+  mutate(problem = case_when(.resid > 0.15 ~ "high residual from fitted", TRUE ~ problem)) %>%
+  mutate(fvfm = case_when(problem == "high residual from fitted" ~ NA_real_, TRUE ~ fvfm)) %>%
+  select(nursery, geno, f, fm, fvfm, fvfmraw, tank_id, tank_set, max_temp, problem)
 ```
 
 
@@ -107,12 +120,12 @@ dfff <- vals %>%
 # Refit models individually without outliers
 # Fit model to each coral, get parameters, fitted values, and residuals
 fmods <- dfff %>%
-  nest(data = c(f, fm, fvfm, tank_id, tank_set, max_temp)) %>%
+  nest(data = c(f, fm, fvfm, fvfmraw, tank_id, tank_set, max_temp, problem)) %>%
   # Fit the model to each coral
   mutate(ll3 = map(data, tryll3)) %>%
   # Get model parameters and fitted values/residuals
   mutate(pars = map(ll3, tidy),
-         pred = map2(ll3, data, ~augment(.x, .y)))
+         pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
 
 fpars <- fmods %>% 
   select(nursery, geno, pars) %>%
@@ -123,6 +136,7 @@ fvals <- fmods %>%
   select(nursery, geno, pred) %>%
   unnest(pred) %>%
   full_join(fpars) %>%
+  full_join(dfff) %>%
   rename(ed50 = estimate)
 
 plotfits(data = filter(fvals, nursery == "rrt"))
