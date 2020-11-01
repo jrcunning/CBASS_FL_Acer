@@ -1,0 +1,336 @@
+---
+title: "Reef Renewal Tavernier *A. palmata* CBASS"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(janitor)
+library(lubridate)
+library(scales)
+library(readxl)
+library(modelr)
+library(tidyverse)
+library(ggthemes)
+library(ecotox)
+library(rcompanion)
+library(lsmeans)
+```
+
+# CBASS temperature logs
+
+#### Import temperature logs for Arduino-controlled tanks
+```{r}
+readlog <- function(logfile, prefix) {
+  read_csv(logfile) %>%
+    # Remove internal header rows
+    filter(PrintDate != "PrintDate") %>%
+    # Format date and time
+    mutate(date = as_date(Date, format = "%Y_%B_%d")) %>%
+    unite(time, Th, Tm, Ts, sep = ":") %>%
+    unite(dttm, date, time) %>%
+    mutate(dttm = ymd_hms(dttm), hm = format(dttm, "%H:%M")) %>%
+    select(dttm, hm, T1SP, TempT1, T2SP, TempT2, T3SP, TempT3, T4SP, TempT4) %>%
+    # Pivot to long format
+    pivot_longer(starts_with("T"), names_to = "key", values_to = "temp") %>%
+    # Remove rows where temp sensors gave error codes
+    filter(temp > 0, temp < 50) %>%
+    # Link arduino box and sensor positions (e.g., B1T2)
+    mutate(tank = str_extract(key, "T[0-9]"),
+           tank = paste0(prefix, tank),
+           key = case_when(grepl("SP", key) ~ str_sub(key, 3, 4),
+                           TRUE ~ str_sub(key, 1, 4)),
+           key = tolower(key)) %>%
+    # Drop rows that did not parse a date/time
+    drop_na(dttm, temp) %>%
+    # Create columns for set point and actual temperature
+    pivot_wider(names_from = key, values_from = temp) %>%
+    # Tidy column types
+    mutate(tank = factor(tank), sp = as.numeric(sp), temp = as.numeric(temp)) %>%
+    # Add maximum setpoint temperature as max_temp column
+    group_by(tank) %>%
+    mutate(max_temp = max(sp, na.rm = TRUE)) %>%
+    ungroup()
+}
+
+# Read in arduino log files
+b1log <- readlog("data/20201006_RRT_Apal/temperature/sdlog/20201007_BOX1_LOG.TXT", prefix = "B1")
+b2log <- readlog("data/20201006_RRT_Apal/temperature/sdlog/20201006_BOX2_LOG.TXT", prefix = "B2")
+b3log <- readlog("data/20201006_RRT_Apal/temperature/sdlog/20201007_BOX3_LOG.TXT", prefix = "B3")
+
+# Tidy arduino log files for this run
+arduinolog <- bind_rows(b1log, b2log, b3log) %>%
+  # Filter to just the date of this run
+  filter(date(dttm) == "2020-10-06") %>%
+  # Specify which arduino boxes controlled port vs. starboard tank sets
+  mutate(tank_set = if_else(str_detect(tank, "B3"), "port", "starboard")) %>%
+  # Add tank_id column from tank design
+  left_join(read_csv("data/tank_setup.csv")) %>%
+  select(dttm, hm, sp, temp, max_temp, tank_set, tank_id)
+```
+
+#### Import HOBO temperature logs for Inkbird-controlled tanks
+```{r}
+# Read in HOBO temperature logs
+hobologfiles <- list.files("data/20201006_RRT_Apal/temperature/hobo", pattern = ".xlsx", full.names = TRUE)
+hobolog <- tibble(filename = hobologfiles) %>%
+  mutate(log = map(filename, read_xlsx, skip = 1)) %>%
+  unnest()
+
+# Tidy HOBO temperature logs
+hobolog <- hobolog %>%
+  clean_names() %>%
+  # Get tank_id from filename
+  mutate(tank_id = str_sub(basename(filename), 1, 2)) %>%
+  # Convert temps from F to C
+  mutate(temp = (temp_f - 32) * 5/9) %>%
+  # Select columns to keep
+  select(dttm = date_time_gmt_0400, temp, tank_id) %>%
+  mutate(hm = format(dttm, "%H:%M")) %>%
+  # Join with tank_id information
+  left_join(read_csv("data/tank_setup.csv"))
+
+# Import inkbird setpoints
+inkbird_sp <- read_csv("data/inkbird_settings.csv") %>%
+  pivot_longer(2:5, names_to = "max_temp", values_to = "sp") %>%
+  mutate(max_temp = as.numeric(str_extract(max_temp, "[0-9]+")),
+         dttm = ymd_hms(paste("2020-10-06", time)), hm = format(dttm, "%H:%M"),
+         temp = NA) %>%
+  left_join(read_csv("data/tank_setup.csv")) %>%
+  select(dttm, hm, sp, temp, max_temp, tank_set, tank_id)
+
+hobolog <- bind_rows(inkbird_sp, hobolog)
+```
+
+### Plot CBASS temperature profiles and set points
+```{r, fig.width = 10}
+# Combine arduino and hobo temperature log data
+templog <- bind_rows(arduinolog, hobolog)
+
+# Plot
+ggplot(templog, mapping = aes(x = dttm, y = temp, group = tank_id)) +
+  geom_line(aes(color = tank_id), lwd = 0.2) +
+  geom_step(aes(y = sp, color = tank_id), lwd = 0.5) +
+  facet_wrap(~ tank_set, scales = "free") +
+  scale_y_continuous(breaks = 30:38, limits = c(29, 39)) +
+  scale_x_datetime(breaks = "hours", labels = label_date("%H:%M"),
+                   limits = as.POSIXct(c("2020-10-06 12:00:00", "2020-10-06 21:00:00"), tz = "UTC")) +
+  theme_hc() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Time of day", y = "Temperature (°C)")
+```
+
+# Results: PAM data
+
+#### Import data from DIVING PAM II
+```{r}
+# Read manually entered data from Diving PAM II
+path <- "data/20201006_RRT_Apal/PAM/dpii.xlsx"
+dpii <- path %>%
+  excel_sheets() %>%
+  set_names() %>%
+  map_df(~ read_excel(path = path, sheet = .x, range = "A1:F43", col_types = "text"), .id = "tank_id") %>%
+  mutate(f = as.numeric(f), fm = as.numeric(fm), fvfm = as.numeric(yii)) %>%
+  clean_names()
+
+# Combine with tank_id metadata
+tanks <- read_csv("data/tank_setup.csv")
+dpii <- full_join(dpii, tanks) %>%
+  select(geno, rec, f, fm, fvfm, tank_id, tank_set, max_temp)
+
+# Write collated data to file
+write_csv(dpii, "data/20201006_RRT_Apal/PAM/RRT_Apal_pamdata.csv")
+```
+
+#### Tidy PAM data
+```{r}
+dpiif <- dpii %>%
+  # If fvfm is NA, replace with zero
+  replace_na(replace = list(fvfm = 0)) %>%
+  # Filter out abnormal fvfm values
+  mutate(fvfm = if_else(max_temp > 35 & fvfm >= 0.5 & f <= 200, 0, fvfm)) %>%
+  # Scale fvfm for each genotype from zero to one
+  group_by(geno) %>%
+  mutate(rfvfm = fvfm/fvfm[which.max(fvfm)]) %>%
+  ungroup()
+
+dpiif %>%
+  ggplot(aes(x = max_temp, y = rfvfm)) +
+  geom_point() +
+  facet_wrap(~ geno)
+```
+
+#### Fit logistic models and plot with EC50
+```{r, fig.width = 10, fig.height = 8}
+# Fit logistic regressions to each genotype
+mods <- dpiif %>%
+  nest(-geno) %>%
+  mutate( mod = map(data, ~ glm(rfvfm ~ log10(max_temp), data = ., family = "quasibinomial")),
+         pred = map(mod, ~ data.frame(lsmeans(., specs = "max_temp", at = list(max_temp = seq(30, 40, 0.1)),
+                                   type = "response"))),
+         ec50 = map_dbl(mod, ~ 10^(MASS::dose.p(., p = 0.5)))) %>%
+  mutate(Genotype = factor(geno, levels = geno[order(-ec50)]))
+
+# Plot data points, fits, and ec50 for each genotype
+mods %>%
+  unnest(pred) %>%
+  ggplot(aes(x = max_temp, y = prob, color = ec50)) +
+  geom_ribbon(aes(ymin = asymp.LCL, ymax = asymp.UCL, linetype = NA), alpha = 0.2) +
+  geom_line() +
+  geom_point(data = unnest(mods, data), aes(y = rfvfm)) +
+  geom_segment(aes(x = ec50, xend = ec50, y = 0, yend = 0.5), lwd = 0.2, lty = 2) +
+  geom_segment(aes(x = min(max_temp), xend = ec50, y = 0.5, yend = 0.5), lwd = 0.2, lty = 2) +
+  facet_wrap(~ Genotype, labeller = label_both, scales = "free") +
+  geom_text(aes(x = ec50, y = 0.05, label = round(ec50, 1)), hjust = 1, nudge_x = -0.2) +
+  scale_x_continuous(breaks = seq(30, 40, 1), minor_breaks = seq(30, 40, 1)) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(x = "Temperature (°C)", y = "Relative Fv/Fm", 
+       shape = "Date of run", color = "EC50 (°C)")
+```
+
+#### Test for differences among genotypes
+```{r}
+# Use EC50 ratios to test for differences between genotypes
+ratio.tests <- t(combn(mods$geno, 2)) %>%        # Get all combinations of 2 genotypes
+  tibble(g1 = .[,1], g2 = .[,2]) %>%
+  select(g1, g2) %>%
+  mutate(res = map2(g1, g2, ~ ratio_test(p = 50,     # Run ratio test on all pairwise comparisons
+                    model_1 = filter(mods, geno == .x) %>% pluck("mod", 1),
+                    model_2 = filter(mods, geno == .y) %>% pluck("mod", 1))))
+
+# Extract results of ratio tests
+res <- ratio.tests %>%
+  unnest(res) %>%
+  mutate(comparison = paste(g1, g2, sep = "-")) %>%
+  arrange(dose_1)
+
+# Adjust p-values using B-H FDR
+res <- res %>%
+  mutate(padj = p.adjust(p_value, method = "fdr"))
+
+# Get statistical group letters from pairwise comparisons
+grouplett <- cldList(padj ~ comparison, data = res, threshold = 0.05, 
+                     remove.zero = FALSE, reversed = TRUE) %>%
+  rename(geno = Group)
+
+# Add statistical group letters to data frame and prepare for plotting
+mods2 <- full_join(mods, grouplett) %>%
+  arrange(-ec50) %>%
+  mutate(ec50l = sprintf("%.1f", round(ec50, 1))) %>%                          # Round  ld50 to one decimal
+  unite(label, geno, ec50l, MonoLetter, sep = " / ", remove = FALSE) %>%   # Create label column
+  mutate_at(vars(geno, label), ~ factor(., levels = .[order(Letter)]))     # Relevel factors in order by LD50
+
+# Plot fitted models and data points
+statplot <- mods2 %>%
+  unnest(pred) %>%
+  ggplot(aes(x = Final_Temp, y = pred, color = label)) +
+  geom_line() +
+  #geom_point(data = unnest(mods, data), aes(y = rY), alpha = 0.5) +
+  scale_color_discrete(name = "Genotype / LD50 / group") +
+  theme(legend.text = element_text(family = "mono"))
+
+# Table of LD50 values and pairwise statistical tests
+mods2 %>%
+  select(geno, ec50l, MonoLetter) %>%
+  knitr::kable(caption = "Genotypes that do not share a letter are significantly different")
+```
+
+# Group genotypes by response similarity
+```{r}
+# Groupings based on cluster analysis
+# Use fitted values for each genotype
+mods <- arrange(mods, -ec50)
+mat <- mods %>%
+  unnest(pred) %>%
+  select(geno, ec50, max_temp, prob) %>%
+  pivot_wider(names_from = max_temp, values_from = prob) %>%
+  select(-geno)
+
+# Cluster based on fitted values and choose four groups
+clust <- hclust(dist(mat))
+#plot(clust, labels = mods$geno)
+#abline(h = c(1.1, 1.37, 1.7), lty = 2)
+geno_groups <- tibble(
+  geno = mods$geno,
+  group = factor(cutree(clust, k = 4)))
+
+# Combine based on groupings
+cmods <- dpiif %>%
+  left_join(geno_groups) %>%
+  group_by(group) %>%
+  nest(data = c(geno, rec, f, fm, fvfm, tank_id, tank_set, max_temp, rfvfm)) %>%
+  mutate( mod = map(data, ~ glm(rfvfm ~ log10(max_temp), data = ., family = "quasibinomial")),
+         pred = map(mod, ~ data.frame(lsmeans(., specs = "max_temp", at = list(max_temp = seq(30, 40, 0.1)),
+                                   type = "response"))),
+         ec50 = map_dbl(mod, ~ 10^(MASS::dose.p(., p = 0.5)))) %>%
+  ungroup() %>%
+  mutate(group = factor(group, levels = group[order(-ec50)]))
+
+# Plot data points, fits, and ld50 for each genotype
+cmods %>%
+  unnest(pred) %>%
+  ggplot(aes(x = max_temp, y = prob, color = ec50)) +
+  geom_ribbon(aes(ymin = asymp.LCL, ymax = asymp.UCL, linetype = NA), alpha = 0.2) +
+  geom_line() +
+  geom_point(data = unnest(cmods, data), aes(y = rfvfm), alpha = 0.3) +
+  geom_segment(aes(x = ec50, xend = ec50, y = 0, yend = 0.5), lwd = 0.2, lty = 2) +
+  geom_segment(aes(x = min(max_temp), xend = ec50, y = 0.5, yend = 0.5), lwd = 0.2, lty = 2) +
+  facet_wrap(~ group, labeller = label_both) +
+  geom_text(aes(x = ec50, y = 0.05, label = round(ec50, 1)), hjust = 1, nudge_x = -0.2) +
+  scale_x_continuous(breaks = seq(30, 40, 1), minor_breaks = seq(30, 40, 1)) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(x = "Temperature (°C)", y = "Relative Fv/Fm", color = "EC50 (°C)")
+
+# Use LD50 ratios to test for differences between genotypes
+ratio.tests <- t(apply(t(combn(cmods$group, 2)), 1, sort)) %>%   # Get all combinations of 2 genotypes
+  tibble(g1 = .[,1], g2 = .[,2]) %>%
+  select(g1, g2) %>%
+  mutate(res = map2(g1, g2, ~ ratio_test(p = 50,     # Run ratio test on all pairwise comparisons
+                    model_1 = filter(cmods, group == .x) %>% pluck("mod", 1),
+                    model_2 = filter(cmods, group == .y) %>% pluck("mod", 1))))
+
+# Extract results of ratio tests
+res <- ratio.tests %>%
+  unnest(res) %>%
+  mutate(comparison = paste(g1, g2, sep = "-")) %>%
+  arrange(-dose_1)
+
+# Adjust p-values using B-H FDR
+res <- res %>%
+  mutate(padj = p.adjust(p_value, method = "fdr"))
+
+# Get statistical group letters from pairwise comparisons
+grouplett <- cldList(padj ~ comparison, data = res, threshold = 0.05, 
+                     remove.zero = FALSE, reversed = FALSE) %>%
+  rename(group = Group)
+
+# Add statistical group letters to data frame and prepare for plotting
+cmods2 <- full_join(cmods, grouplett) %>%
+  arrange(-ec50) %>%
+  mutate(ec50l = sprintf("%.1f", round(ec50, 1))) %>%                      # Round  ld50 to one decimal
+  unite(label, group, MonoLetter, sep = " / ", remove = FALSE) %>%   # Create label column
+  mutate_at(vars(group, label), ~ factor(., levels = .[order(Letter)]))     # Relevel factors in order by LD50
+
+# Plot fitted models and data points
+cmods2 %>%
+  unnest(pred) %>%
+  ggplot(aes(x = max_temp, y = prob, group = label, color = label)) +
+  geom_ribbon(aes(ymin = asymp.LCL, ymax = asymp.UCL, linetype = NA), alpha = 0.2) +
+  geom_line() +
+  geom_segment(aes(x = ec50, xend = ec50, y = 0, yend = 0.5), lwd = 0.2, lty = 2) +
+  geom_segment(aes(x = min(max_temp), xend = ec50, y = 0.5, yend = 0.5), lwd = 0.2, lty = 2) +
+  geom_text(aes(x = ec50, y = 0.01, label = round(ec50, 1)), hjust = 1, nudge_x = -0.05, size = 3) +
+  scale_color_manual(values = c("#FF0000", "#C6008E", "#8800D2", "#0000FF")) +
+  theme(legend.text = element_text(family = "mono")) +
+  labs(x = "Temperature (°C)", y = "Relative Fv/Fm", color = "Group / stat")
+
+# Which genos are in which group?
+geno_groups %>%
+  group_by(group) %>%
+  summarise(n_genotypes = n(), genotypes = paste0(geno, collapse = ", ")) %>%
+  knitr::kable()
+```
+
