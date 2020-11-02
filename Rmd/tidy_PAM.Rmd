@@ -201,3 +201,10 @@ res3f %>%
   facet_grid(~ nursery, scales = "free_x") +
   scale_x_discrete(labels = res3f$geno[order(res3f$genoN)])
 ```
+
+```{r}
+res3f %>%
+  select(nursery, geno, ed50 = estimate, std.error, genoN) %>%
+  write_csv(path = "data/ed50_values.csv")
+```
+
