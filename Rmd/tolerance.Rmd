@@ -1,0 +1,120 @@
+---
+title: "Thermal tolerance analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(readxl)
+library(janitor)
+library(parzer)
+library(broom)
+library(tidyverse)
+library(lsmeans)
+```
+
+This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](Rmd/tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Rmd/Mote_Acer.html), [FWC](Rmd/FWC_Acer.html), [RRT](Rmd/RRT_Acer.html), [CRF](Rmd/CRF_Acer.html), [UM](Rmd/UM_Acer.html).
+
+# Import data
+```{r}
+# Import ed50 values for all genotypes
+ed50 <- read_csv("data/ed50_values.csv") %>%
+  mutate(genoN = factor(genoN, levels = genoN[order(ed50)])) %>%
+  # Replace '(A)', etc. from geno names
+  mutate(geno = str_replace(geno, "\\(.*\\)", ""))
+
+# Import genotype metadata
+gmd <- read_csv("data/genotype_metadata.csv") %>%
+  mutate(nursery = tolower(nursery),
+         across(everything(), str_squish),
+         across(ends_with("lat"), ~signif(parse_lat(.), 6)),             # parse latitude
+         across(ends_with("lon"), ~signif(parse_lon(.), 6)))             # parse longitude
+
+# Combine ed50 values with genotype metadata
+df <- inner_join(ed50, gmd) %>%
+  # Order nurseries from south to north
+  mutate(nursery = factor(nursery, levels = c("mote", "fwc", "rrt", "crf", "um")))
+```
+
+# What is the range in thermal tolerance across all genotypes?
+```{r}
+ggplot(df, aes(x = ed50, fill = nursery)) + 
+  geom_histogram(binwidth = 0.1)
+
+summary(df$ed50)
+```
+
+```{r, fig.width = 10}
+ggplot(df, aes(x = genoN, y = ed50, color = nursery)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error))
+```
+
+```{r, fig.width = 10}
+plotnurs <- function(data) {
+  ggplot(data, aes(x = fct_reorder(ugeno, ed50), y = ed50, color = nursery)) +
+    geom_point() +
+    geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+    facet_wrap(~nursery, scale = "free_x", ncol = 1) +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x = "") +
+    scale_color_discrete(drop = FALSE) +
+    scale_y_continuous(limits = c(34.5, 38.0))
+}
+
+plotnurs(filter(df, nursery == "mote"))
+plotnurs(filter(df, nursery == "fwc"))
+plotnurs(filter(df, nursery == "rrt"))
+plotnurs(filter(df, nursery == "crf"))
+plotnurs(filter(df, nursery == "um"))
+```
+
+# Does thermal tolerance vary across nurseries?
+```{r}
+ggplot(df, aes(x = nursery, y = ed50)) +
+  geom_violin(aes(fill = nursery)) +
+  geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1, binwidth = 0.05, alpha = 0.2) +
+  stat_summary(fun.data = "mean_sdl",  fun.args = list(mult = 1), 
+               geom = "pointrange", color = "black", size = 0.7)
+
+mod <- lm(ed50 ~ nursery, data = df)
+anova(mod)
+
+lsm <- lsmeans(mod, specs = "nursery")
+tibble(multcomp::cld(lsm)) %>% knitr::kable()
+```
+
+# Does thermal tolerance differ for the same genotype grown at different nurseries?
+```{r}
+multi <- df %>%
+  group_by(ugeno) %>%
+  filter(n_distinct(nursery) > 1)
+
+ggplot(multi, aes(x = nursery, y = ed50, color = nursery)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+  facet_wrap(~ugeno) +
+  theme(legend.position = "none")
+
+mod <- lm(ed50 ~ ugeno + nursery, weights = 1/std.error, data = multi)
+anova(mod)
+```
+
+
+# Is thermal tolerance related to source latitude and longitude?
+```{r, fig.width = 10}
+ggplot(df, aes(x = source_lon, y = source_lat, color = ed50)) +
+  geom_point(alpha = 0.5) +
+  scale_color_gradient(low = "blue", high = "red")
+
+mod <- lm(ed50 ~ source_lat * nursery, weights = 1/std.error, data = df)
+anova(mod)
+lstrends(mod, specs = "nursery", var = "source_lat")
+
+res <- augment(mod, drop_na(df, source_lat))
+ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+  geom_line(aes(y = .fitted))
+```
