@@ -14,7 +14,7 @@ library(tidyverse)
 library(lsmeans)
 ```
 
-This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](Rmd/tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Rmd/Mote_Acer.html), [FWC](Rmd/FWC_Acer.html), [RRT](Rmd/RRT_Acer.html), [CRF](Rmd/CRF_Acer.html), [UM](Rmd/UM_Acer.html).
+This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Mote_Acer.html), [FWC](FWC_Acer.html), [RRT](RRT_Acer.html), [CRF](CRF_Acer.html), [UM](UM_Acer.html).
 
 # Import data
 ```{r}
@@ -78,7 +78,7 @@ ggplot(df, aes(x = nursery, y = ed50)) +
   stat_summary(fun.data = "mean_sdl",  fun.args = list(mult = 1), 
                geom = "pointrange", color = "black", size = 0.7)
 
-mod <- lm(ed50 ~ nursery, data = df)
+mod <- lm(ed50 ~ nursery, weights = 1/std.error, data = df)
 anova(mod)
 
 lsm <- lsmeans(mod, specs = "nursery")
