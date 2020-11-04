@@ -1,0 +1,118 @@
+---
+title: "KJS/NSU *A. cervicornis* CBASS run"
+subtitle: "R/V *Coral Reef II*, August 20-21, 2020"
+output: html_document
+---
+
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(janitor)
+library(lubridate)
+library(scales)
+library(readxl)
+library(ggthemes)
+library(tidyverse)
+```
+
+# CBASS temperature logs
+
+## Import CBASS log files
+```{r}
+b1log <- read_csv("data/20200820_KJSNSU_Acer/Log_Files/B1_LOG_0821.TXT")
+
+b1log <- b1log %>%
+  filter(PrintDate != "PrintDate") %>%
+  mutate(date = as_date(Date, format = "%Y_%B_%d")) %>%
+  unite(time, Th, Tm, Ts, sep = ":") %>%
+  unite(dttm, date, time) %>%
+  mutate(dttm = ymd_hms(dttm),
+         hm = format(dttm, "%H:%M")) %>%
+  select(dttm, hm, T1SP, TempT1, T2SP, TempT2, T3SP, TempT3, T4SP, TempT4) %>%
+  pivot_longer(starts_with("T"), names_to = "key", values_to = "temp") %>%
+  filter(temp > 0, temp < 50) %>%
+  mutate(tank = str_extract(key, "T[0-9]"),
+         tank = paste0("B1", tank),
+         key = case_when(grepl("SP", key) ~ str_sub(key, 3, 4),
+                         TRUE ~ str_sub(key, 1, 4))) %>%
+  pivot_wider(names_from = key, values_from = temp)
+
+b2log <- read_csv("data/20200820_KJSNSU_Acer/Log_Files/B2_LOG_0821.TXT")
+
+b2log <- b2log %>%
+  filter(PrintDate != "PrintDate") %>%
+  mutate(date = as_date(Date, format = "%Y_%B_%d")) %>%
+  unite(time, Th, Tm, Ts, sep = ":") %>%
+  unite(dttm, date, time) %>%
+  mutate(dttm = ymd_hms(dttm),
+         hm = format(dttm, "%H:%M")) %>%
+  select(dttm, hm, T1SP, TempT1, T2SP, TempT2, T3SP, TempT3, T4SP, TempT4) %>%
+  pivot_longer(starts_with("T"), names_to = "key", values_to = "temp") %>%
+  filter(temp > 0, temp < 50) %>%
+  mutate(tank = str_extract(key, "T[0-9]"),
+         tank = paste0("B2", tank),
+         key = case_when(grepl("SP", key) ~ str_sub(key, 3, 4),
+                         TRUE ~ str_sub(key, 1, 4))) %>%
+  pivot_wider(names_from = key, values_from = temp)
+
+log <- bind_rows(b1log, b2log) %>%
+  mutate(tank = factor(tank),
+         SP = as.numeric(SP),
+         Temp = as.numeric(Temp))
+```
+
+## Import CBASS set points (used for settings file)
+```{r}
+sp <- read_xlsx("data/20200820_KJSNSU_Acer/Temp_Profiles/CRII_ACERV_2020.xlsx") %>%
+  mutate(Time = format(Time, "%H:%M")) %>%
+  filter(Time >= "13:00", Time <= "22:00") %>%
+  crossing(date = as_date(c("2020-08-20", "2020-08-21"))) %>%
+  mutate(dttm = ymd_hm(paste(date, Time))) %>%
+  select(dttm, matches("B")) %>%
+  pivot_longer(-dttm, names_to = "tank", values_to = "Temp") %>%
+  arrange(dttm)
+```
+
+## Plot CBASS temperature profiles with set points
+```{r, fig.width = 10}
+ggplot(mapping = aes(x = dttm, y = Temp, group = tank)) +
+  geom_line(data = filter(log, hm > "12:50", hm < "21:50"),
+            aes(color = tank), lwd = 0.2) +
+  geom_step(data = sp, lwd = 0.2) +
+  facet_wrap(~date(dttm), scales = "free") +
+  scale_y_continuous(breaks = 30:37) +
+  scale_x_datetime(breaks = "hours", labels = label_date("%H:%M")) +
+  theme_hc() +
+  theme(legend.position = "none") +
+  labs(x = "Time of day", y = "Temperature (°C)")
+```
+
+## Import PAM data
+```{r}
+df <- read_csv("data/20200820_KJSNSU_Acer/PAM/KJS_pamdata_tidy.csv")
+
+df <- df %>%
+  mutate(nursery = "kjs",
+         geno = paste0("kjs", Genotype)) %>%
+  select(nursery, geno, f, fm, fvfm, tank_id = Tank, max_temp = Final_Temp)
+
+# Write collated data to file
+write_csv(df, "data/20200820_KJSNSU_Acer/KJS_pamdata.csv")
+```
+
+
+#### Plot raw PAM data
+
+Color indicates possible outliers
+
+```{r, fig.height = 10, fig.width = 10}
+df %>%
+  ggplot(aes(x = max_temp, y = fvfm)) +
+  geom_point() +
+  facet_wrap(~ geno) +
+  theme(legend.position = "none")
+```
+

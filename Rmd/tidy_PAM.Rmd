@@ -34,7 +34,7 @@ dff <- df %>%
   filter(!(geno == "ML1" & nursery == "rrt" & max_temp == 32)) %>%
   # Save raw fvfm in new column
   mutate(fvfmraw = fvfm) %>%          
-  # Make missing values zero (high temp / no signal)
+  # Make missing values zero (these were all high temp / no signal)
   replace_na(replace = list(fvfm = 0)) %>%      
   # Identify problematic data points
   mutate(problem = case_when(
@@ -42,9 +42,22 @@ dff <- df %>%
     fvfm > 0.750 ~ "abnormally high",
     TRUE ~ "none")) %>%
   mutate(fvfm = case_when(
-    problem == "abnormally high w/ low Ft" ~ 0,     # Change abnormally high values at high temps to zero
-    problem == "abnormally high" ~ NA_real_,    # Change all values > 0.750 to NA
-    TRUE ~ fvfm))
+    problem == "abnormally high w/ low Ft" ~ 0,   # Change abnormally high values at high temps to zero
+    problem == "abnormally high" ~ NA_real_,      # Change all values > 0.750 to NA
+    problem == "none" ~ fvfm))
+
+# Combine with KJS data
+kjs <- read_csv("data/20200820_KJSNSU_Acer/KJS_pamdata.csv") %>%
+    mutate(fvfmraw = fvfm,
+           problem = case_when(
+             max_temp >= 36 & fvfm >= 0.5 & f <= 150 ~ "abnormally high w/ low Ft",
+             fvfm > 0.750 ~ "abnormally high",
+             TRUE ~ "none"),
+           fvfm = case_when(
+             problem == "abnormally high w/ low Ft" ~ 0,   # Change abnormally high values at high temps to zero
+             problem == "abnormally high" ~ NA_real_,      # Change all values > 0.750 to NA
+             problem == "none" ~ fvfm))
+dff <- bind_rows(dff, kjs)
 
 # Plot all data points
 ggplot(dff, aes(x = max_temp, y = fvfm)) +
@@ -107,6 +120,7 @@ plotfits <- function(data) {
 # plotfits(data = filter(vals, nursery == "mote"))
 # plotfits(data = filter(vals, nursery == "crf"))
 # plotfits(data = filter(vals, nursery == "um"))
+# plotfits(data = filter(vals, nursery == "kjs"))
 
 # Remove outlier datapoints
 dfff <- vals %>%
@@ -146,25 +160,27 @@ fvals <- fmods %>%
 # plotfits(data = filter(fvals, nursery == "mote"))
 # plotfits(data = filter(fvals, nursery == "crf"))
 # plotfits(data = filter(fvals, nursery == "um"))
+# plotfits(data = filter(fvals, nursery == "kjs"))
 
-# fvals %>%
-#   mutate(genoN = paste0("g", group_indices(dfff, nursery, geno))) %>%
-#   ggplot(aes(x = fct_reorder(genoN, ed50), y = ed50)) +
-#   geom_point() +
-#   geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-#   facet_grid(~ nursery, scales = "free_x") +
-#   scale_y_continuous(limits = c(34.5, 38))
+fvals %>%
+  mutate(genoN = paste0("g", group_indices(fvals, nursery, geno))) %>%
+  ggplot(aes(x = fct_reorder(genoN, ed50), y = ed50)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+  facet_grid(~ nursery, scales = "free_x") #+
+  #scale_y_continuous(limits = c(34.5, 38))
 ```
 
 ```{r}
 # Refit genos all together without outliers, and fixed maximum across genos
 dfff$genoN <- factor(paste0("g", group_indices(dfff, nursery, geno)))
-# m3f <- drm(fvfm ~ max_temp, genoN, data = dfff,
-#           fct = LL.3(names = c('hill', 'max', 'ED50')),
-#           upperl = c(100, NA, NA),    # upper limit of 100 on hill parameter
-#           pmodels = data.frame(genoN, 1, genoN))  # all genos have fixed maximum
-# 
-# save(m3f, file = "data/ll3modf.RData")
+m3f <- drm(fvfm ~ max_temp, genoN, data = dfff,
+          fct = LL.3(names = c('hill', 'max', 'ED50')),
+          lowerl = c(20, NA, NA),
+          upperl = c(100, NA, NA),    # upper limit of 100 on hill parameter
+          pmodels = data.frame(genoN, 1, genoN))  # all genos have fixed maximum
+
+save(m3f, file = "data/ll3modf.RData")
 load("data/ll3modf.RData")
 
 # Tidy model output and join ED50 estimates with sample metadata
@@ -185,11 +201,13 @@ pred3f <- augment(m3f, data.frame(m3f$data)) %>%
   mutate(genoN = factor(genoN, levels = levels(res3f$genoN)))
 
 # Plot for each nursery
+
 plotfits(data = filter(pred3f, nursery == "rrt"))
 plotfits(data = filter(pred3f, nursery == "fwc"))
 plotfits(data = filter(pred3f, nursery == "mote"))
 plotfits(data = filter(pred3f, nursery == "crf"))
 plotfits(data = filter(pred3f, nursery == "um"))
+plotfits(data = filter(pred3f, nursery == "kjs"))
 ```
 
 ```{r, fig.width = 10}
