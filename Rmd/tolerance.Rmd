@@ -14,7 +14,7 @@ library(tidyverse)
 library(lsmeans)
 ```
 
-This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Mote_Acer.html), [FWC](FWC_Acer.html), [RRT](RRT_Acer.html), [CRF](CRF_Acer.html), [UM](UM_Acer.html).
+This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Mote_Acer.html), [FWC](FWC_Acer.html), [RRT](RRT_Acer.html), [CRF](CRF_Acer.html), [UM](UM_Acer.html), and [Kelsey's corals at NSU](KJS_Acer.html).
 
 # Import data
 ```{r}
@@ -34,7 +34,7 @@ gmd <- read_csv("data/genotype_metadata.csv") %>%
 # Combine ed50 values with genotype metadata
 df <- inner_join(ed50, gmd) %>%
   # Order nurseries from south to north
-  mutate(nursery = factor(nursery, levels = c("mote", "fwc", "rrt", "crf", "um")))
+  mutate(nursery = factor(nursery, levels = c("mote", "fwc", "rrt", "crf", "um", "kjs")))
 ```
 
 # What is the range in thermal tolerance across all genotypes?
@@ -59,8 +59,7 @@ plotnurs <- function(data) {
     facet_wrap(~nursery, scale = "free_x", ncol = 1) +
     theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1)) +
     labs(x = "") +
-    scale_color_discrete(drop = FALSE) +
-    scale_y_continuous(limits = c(34.5, 38.0))
+    scale_color_discrete(drop = FALSE)
 }
 
 plotnurs(filter(df, nursery == "mote"))
@@ -68,6 +67,7 @@ plotnurs(filter(df, nursery == "fwc"))
 plotnurs(filter(df, nursery == "rrt"))
 plotnurs(filter(df, nursery == "crf"))
 plotnurs(filter(df, nursery == "um"))
+plotnurs(filter(df, nursery == "kjs"))
 ```
 
 # Does thermal tolerance vary across nurseries?
@@ -108,11 +108,11 @@ ggplot(df, aes(x = source_lon, y = source_lat, color = ed50)) +
   geom_point(alpha = 0.5) +
   scale_color_gradient(low = "blue", high = "red")
 
-mod <- lm(ed50 ~ source_lat * nursery, weights = 1/std.error, data = df)
+mod <- lm(ed50 ~ source_lat + nursery, weights = 1/std.error, data = df)
 anova(mod)
 lstrends(mod, specs = "nursery", var = "source_lat")
 
-res <- augment(mod, drop_na(df, source_lat))
+res <- augment(mod, left_join(mod$model, df))
 ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
   geom_point() +
   geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
