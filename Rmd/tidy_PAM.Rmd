@@ -162,25 +162,25 @@ fvals <- fmods %>%
 # plotfits(data = filter(fvals, nursery == "um"))
 # plotfits(data = filter(fvals, nursery == "kjs"))
 
-fvals %>%
-  mutate(genoN = paste0("g", group_indices(fvals, nursery, geno))) %>%
-  ggplot(aes(x = fct_reorder(genoN, ed50), y = ed50)) +
-  geom_point() +
-  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-  facet_grid(~ nursery, scales = "free_x") #+
-  #scale_y_continuous(limits = c(34.5, 38))
+# fvals %>%
+#   mutate(genoN = paste0("g", group_indices(fvals, nursery, geno))) %>%
+#   ggplot(aes(x = fct_reorder(genoN, ed50), y = ed50)) +
+#   geom_point() +
+#   geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+#   facet_grid(~ nursery, scales = "free_x") #+
+#   #scale_y_continuous(limits = c(34.5, 38))
 ```
 
 ```{r}
 # Refit genos all together without outliers, and fixed maximum across genos
 dfff$genoN <- factor(paste0("g", group_indices(dfff, nursery, geno)))
-m3f <- drm(fvfm ~ max_temp, genoN, data = dfff,
-          fct = LL.3(names = c('hill', 'max', 'ED50')),
-          lowerl = c(20, NA, NA),
-          upperl = c(100, NA, NA),    # upper limit of 100 on hill parameter
-          pmodels = data.frame(genoN, 1, genoN))  # all genos have fixed maximum
-
-save(m3f, file = "data/ll3modf.RData")
+# m3f <- drm(fvfm ~ max_temp, genoN, data = dfff,
+#           fct = LL.3(names = c('hill', 'max', 'ED50')),
+#           lowerl = c(20, NA, NA),
+#           upperl = c(100, NA, NA),    # upper limit of 100 on hill parameter
+#           pmodels = data.frame(genoN, 1, genoN))  # all genos have fixed maximum
+# 
+# save(m3f, file = "data/ll3modf.RData")
 load("data/ll3modf.RData")
 
 # Tidy model output and join ED50 estimates with sample metadata
@@ -224,5 +224,9 @@ res3f %>%
 res3f %>%
   select(nursery, geno, ed50 = estimate, std.error, genoN) %>%
   write_csv(path = "data/ed50_values.csv")
+
+pred3f %>%
+  select(nursery, geno, genoN, max_temp, fvfmraw, fvfm, .fitted, ed50) %>%
+  write_csv(path = "data/pam_tidy.csv")
 ```
 
