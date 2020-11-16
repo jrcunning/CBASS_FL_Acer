@@ -1,6 +1,8 @@
 ---
 title: "Thermal tolerance analysis"
-output: html_document
+output:
+  html_document:
+    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
@@ -16,8 +18,10 @@ library(lsmeans)
 
 This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Mote_Acer.html), [FWC](FWC_Acer.html), [RRT](RRT_Acer.html), [CRF](CRF_Acer.html), [UM](UM_Acer.html), and [Kelsey's corals at NSU](KJS_Acer.html).
 
-# Import data
+
 ```{r}
+# Import data
+
 # Import ed50 values for all genotypes
 ed50 <- read_csv("data/ed50_values.csv") %>%
   mutate(genoN = factor(genoN, levels = genoN[order(ed50)])) %>%
@@ -38,9 +42,12 @@ df <- inner_join(ed50, gmd) %>%
 ```
 
 # What is the range in thermal tolerance across all genotypes?
+
 ```{r}
-ggplot(df, aes(x = ed50, fill = nursery)) + 
-  geom_histogram(binwidth = 0.1)
+ggplot(df, aes(x = ed50)) + 
+  geom_histogram(binwidth = 0.1) +
+  labs(x = "ED50 Tolerance (°C)", y = "Number of genotypes",
+       title = "Histogram of ED50 values for all corals")
 
 summary(df$ed50)
 ```
@@ -48,17 +55,21 @@ summary(df$ed50)
 ```{r, fig.width = 10}
 ggplot(df, aes(x = genoN, y = ed50, color = nursery)) +
   geom_point() +
-  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error))
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+  labs(x = "Genotype", y = "ED50 Tolerance (°C)",
+       title = "ED50 (±SE) for all genotypes, colored by nursery")
 ```
 
 ```{r, fig.width = 10}
 plotnurs <- function(data) {
+  nurs <- as.character(unique(data$nursery))
   ggplot(data, aes(x = fct_reorder(ugeno, ed50), y = ed50, color = nursery)) +
     geom_point() +
     geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-    facet_wrap(~nursery, scale = "free_x", ncol = 1) +
+    #facet_wrap(~nursery, scale = "free_x", ncol = 1) +
     theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1)) +
-    labs(x = "") +
+    labs(x = "Genotype", y = "ED50 Tolerance (°C)",
+         title = paste("ED50 (±SE) for all genotypes at", nurs)) +
     scale_color_discrete(drop = FALSE)
 }
 
@@ -76,14 +87,24 @@ ggplot(df, aes(x = nursery, y = ed50)) +
   geom_violin(aes(fill = nursery)) +
   geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1, binwidth = 0.05, alpha = 0.2) +
   stat_summary(fun.data = "mean_sdl",  fun.args = list(mult = 1), 
-               geom = "pointrange", color = "black", size = 0.7)
+               geom = "pointrange", color = "black", size = 0.7) +
+  labs(x = "Nursery", y = "ED50 Tolerance (°C)", 
+       title = "ED50 tolerance by nursery location")
 
 mod <- lm(ed50 ~ nursery, weights = 1/std.error, data = df)
-anova(mod)
+knitr::kable(anova(mod))
+tidymod <- tidy(anova(mod))
+nursvar <- tidymod$sumsq[1] / sum(tidymod$sumsq)
 
 lsm <- lsmeans(mod, specs = "nursery")
+tidylsm <- tidy(lsm)
 tibble(multcomp::cld(lsm)) %>% knitr::kable()
+
+meandiff <- diff(range(tidylsm$estimate))
+totrange <- diff(range(df$ed50))
 ```
+
+Yes, there is significant variation in thermal tolerance across nurseries. However, the effect size is relatively small: nursery explained `r round(nursvar*100, 1)`% of the total variation, meaning that most of the variation (`r 100-round(nursvar*100, 1)`%) occurs within nurseries. The difference in average ED50 values between the highest (RRT) and lowest nursery (FWC), was only `r round(meandiff, 1)`, while the total range of ED50 values across all corals was `r round(totrange, 1)`.
 
 # Does thermal tolerance differ for the same genotype grown at different nurseries?
 ```{r}
@@ -95,26 +116,56 @@ ggplot(multi, aes(x = nursery, y = ed50, color = nursery)) +
   geom_point() +
   geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
   facet_wrap(~ugeno) +
-  theme(legend.position = "none")
+  theme(legend.position = "none") +
+  labs(x = "Nursery", y = "ED50 Tolerance (°C)",
+       title = "Comparison of ED50 for genotypes found at multiple nurseries")
 
-mod <- lm(ed50 ~ ugeno + nursery, weights = 1/std.error, data = multi)
-anova(mod)
+# mod <- lm(ed50 ~ ugeno * nursery, weights = 1/std.error, data = multi)
+# anova(mod)
 ```
 
+I think there my be more genotypes in common, but with differing names, across different nurseries. Please let me know if you think you can help identify some of these that may be missing from the graph above...
 
 # Is thermal tolerance related to source latitude and longitude?
 ```{r, fig.width = 10}
 ggplot(df, aes(x = source_lon, y = source_lat, color = ed50)) +
   geom_point(alpha = 0.5) +
-  scale_color_gradient(low = "blue", high = "red")
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(x = "Source Longitude", y = "Source Latitude", color = "ED50 Tolerance (°C)")
+```
 
-mod <- lm(ed50 ~ source_lat + nursery, weights = 1/std.error, data = df)
-anova(mod)
-lstrends(mod, specs = "nursery", var = "source_lat")
+```{r}
+mod <- lm(ed50 ~ nursery + source_lat * source_lon, weights = 1/std.error, data = df)
+knitr::kable(anova(mod))
+```
+  
+Neither source latitude or longitude is a significant predictor of ED50 values across all corals. 
+
+We can also look at whether there is a latitude effect within each nursery.  
+```{r}
+mod <- lm(ed50 ~ source_lat * nursery, weights = 1/std.error, data = df)
+#anova(mod)
+#lstrends(mod, specs = "nursery", var = "source_lat")
 
 res <- augment(mod, left_join(mod$model, df))
 ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
   geom_point() +
   geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-  geom_line(aes(y = .fitted))
+  geom_line(aes(y = .fitted)) +
+  geom_smooth(se = FALSE, lty = 2, lwd = 0.5) +
+  facet_wrap(~nursery, scales = "free") +
+  labs(x = "Source Latitude", y = "ED50 Tolerance (°C)",
+       title = "ED50 Tolerance vs. source latitude, by nursery")
 ```
+
+There does not appear to be much if any effect of source latitude. Solid lines are linear regression fits, and dashed lines are loess smooths for each nursery. Note the different latitudinal ranges for each nursery -- below all are plotted together.
+
+```{r}
+ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+  geom_line(aes(y = .fitted)) +
+  labs(x = "Source Latitude", y = "ED50 Tolerance (°C)",
+       title = "ED50 Tolerance vs. source latitude, all nurseries")
+```
+
