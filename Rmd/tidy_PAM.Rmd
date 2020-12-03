@@ -38,7 +38,7 @@ dff <- df %>%
   replace_na(replace = list(fvfm = 0)) %>%      
   # Identify problematic data points
   mutate(problem = case_when(
-    max_temp >= 36 & fvfm >= 0.4 & f <= 250 ~ "abnormally high w/ low Ft",
+    max_temp >= 36 & fvfm >= 0.3 & f <= 200 ~ "abnormally high w/ low Ft",
     fvfm > 0.750 ~ "abnormally high",
     TRUE ~ "none")) %>%
   mutate(fvfm = case_when(
@@ -71,8 +71,8 @@ ggplot(dff, aes(x = max_temp, y = fvfm)) +
 ll3 <- function(data) {
   drm(fvfm ~ max_temp, data = drop_na(data, fvfm), 
       fct = LL.3(names = c("hill", "max", "ED50")),
-      upperl = c(100, 0.67, NA),
-      lowerl = c(NA, 0.66, NA))}
+      upperl = c(100, 0.7, 40),
+      lowerl = c(NA, 0.6, 32))}
 tryll3 <- possibly(ll3, otherwise = NULL)
 
 # Fit model to each coral, get parameters, fitted values, and residuals
@@ -94,7 +94,9 @@ vals <- initmods %>%
   unnest(pred) %>%
   full_join(pars) %>%
   full_join(dff) %>%
-  rename(ed50 = estimate)
+  rename(ed50 = estimate) %>%
+  mutate(problem = factor(problem, levels = c("none", "abnormally high", "abnormally high w/ low Ft", 
+                                              "high residual from fitted", "high cook's distance")))
 
 
 # Define function to plot raw data, fitted values, and ed50 for each genotype
@@ -111,23 +113,27 @@ plotfits <- function(data) {
               aes(x = ed50, y = 0.05, label = round(ed50, 2)), 
               hjust = 1, nudge_x = -0.2, size = 3) +
     facet_wrap(~ geno) +
-    scale_color_manual(values = c("black", "red", "orange", "blue"), drop = FALSE)
+    scale_color_manual(values = c("black", "red", "orange", "blue", "turquoise"), drop = FALSE)
 }
 
 # Plot fits for each nursery
-# plotfits(data = filter(vals, nursery == "rrt"))
-# plotfits(data = filter(vals, nursery == "fwc"))
-# plotfits(data = filter(vals, nursery == "mote"))
-# plotfits(data = filter(vals, nursery == "crf"))
-# plotfits(data = filter(vals, nursery == "um"))
-# plotfits(data = filter(vals, nursery == "kjs"))
+plotfits(data = filter(vals, nursery == "rrt"))
+plotfits(data = filter(vals, nursery == "fwc"))
+plotfits(data = filter(vals, nursery == "mote"))
+plotfits(data = filter(vals, nursery == "crf"))
+plotfits(data = filter(vals, nursery == "um"))
+plotfits(data = filter(vals, nursery == "kjs"))
 
 # Remove outlier datapoints
 dfff <- vals %>%
-  mutate(problem = case_when(.resid > 0.15 ~ "high residual from fitted", TRUE ~ problem)) %>%
-  mutate(problem = factor(problem, levels = c("none", "abnormally high", "abnormally high w/ low Ft", 
-                                              "high residual from fitted"))) %>%
-  mutate(fvfm = case_when(problem == "high residual from fitted" ~ NA_real_, TRUE ~ fvfm)) %>%
+  mutate(problem = case_when(.cooksd > 0.25 & .resid > 0 ~ "high cook's distance", 
+                             .resid > 0.15 ~ "high residual"
+                             TRUE ~ as.character(problem))) %>%
+  mutate(problem = factor(problem, levels = c("none", "abnormally high", 
+                                              "abnormally high w/ low Ft", 
+                                              "high residual", "high cook's distance"))) %>%
+  mutate(fvfm = case_when(problem == "high residual from fitted" ~ NA_real_, 
+                          problem == "high cook's distance" ~ NA_real_, TRUE ~ fvfm)) %>%
   select(nursery, geno, f, fm, fvfm, fvfmraw, tank_id, tank_set, max_temp, problem)
 ```
 
@@ -147,6 +153,7 @@ fpars <- fmods %>%
   select(nursery, geno, pars) %>%
   unnest(pars) %>%
   filter(term == "ED50")
+#write_csv(fpars, path = "indfits_lessconstr.csv")
 
 fvals <- fmods %>%
   select(nursery, geno, pred) %>%
@@ -155,12 +162,12 @@ fvals <- fmods %>%
   full_join(dfff) %>%
   rename(ed50 = estimate)
 
-# plotfits(data = filter(fvals, nursery == "rrt"))
-# plotfits(data = filter(fvals, nursery == "fwc"))
-# plotfits(data = filter(fvals, nursery == "mote"))
-# plotfits(data = filter(fvals, nursery == "crf"))
-# plotfits(data = filter(fvals, nursery == "um"))
-# plotfits(data = filter(fvals, nursery == "kjs"))
+plotfits(data = filter(fvals, nursery == "rrt"))
+plotfits(data = filter(fvals, nursery == "fwc"))
+plotfits(data = filter(fvals, nursery == "mote"))
+plotfits(data = filter(fvals, nursery == "crf"))
+plotfits(data = filter(fvals, nursery == "um"))
+plotfits(data = filter(fvals, nursery == "kjs"))
 
 # fvals %>%
 #   mutate(genoN = paste0("g", group_indices(fvals, nursery, geno))) %>%
@@ -174,13 +181,13 @@ fvals <- fmods %>%
 ```{r}
 # Refit genos all together without outliers, and fixed maximum across genos
 dfff$genoN <- factor(paste0("g", group_indices(dfff, nursery, geno)))
-# m3f <- drm(fvfm ~ max_temp, genoN, data = dfff,
-#           fct = LL.3(names = c('hill', 'max', 'ED50')),
-#           lowerl = c(20, NA, NA),
-#           upperl = c(100, NA, NA),    # upper limit of 100 on hill parameter
-#           pmodels = data.frame(genoN, 1, genoN))  # all genos have fixed maximum
-# 
-# save(m3f, file = "data/ll3modf.RData")
+m3f <- drm(fvfm ~ max_temp, genoN, data = dfff,
+          fct = LL.3(names = c('hill', 'max', 'ED50')),
+          lowerl = c(20, NA, 30),
+          upperl = c(100, NA, 40),    # upper limit of 100 on hill parameter
+          pmodels = data.frame(genoN, genoN, genoN))  # all genos have indep. maximum
+
+save(m3f, file = "data/ll3modf.RData")
 load("data/ll3modf.RData")
 
 # Tidy model output and join ED50 estimates with sample metadata
