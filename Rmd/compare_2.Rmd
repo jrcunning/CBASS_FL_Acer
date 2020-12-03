@@ -1,0 +1,195 @@
+---
+title: "compare_fittogether"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(readxl)
+library(janitor)
+library(parzer)
+library(broom)
+
+library(lsmeans)
+library(mcr)
+library(ggpubr)
+library(drc)
+library(tidyverse)
+```
+
+```{r}
+# Import cleaned/filtered PAM data from October cruise
+oct <- read_csv("data/pam_tidy.csv") %>%
+  select(nursery, geno, max_temp, fvfm) %>%
+  drop_na()
+gmd <- read_csv("data/genotype_metadata.csv") %>%
+  mutate(nursery = tolower(nursery),
+         ugeno = gsub(" ", "", ugeno))
+oct <- inner_join(oct, gmd) %>%
+  mutate(geno = ugeno)
+         
+
+# Import cleaned/filtered PAM data from Kelsey's May runs of genotype swap corals
+may <- read_csv("~/Projects/CBASS_FL_genoswap/pam_tidy.csv") %>%
+  select(nursery, geno, max_temp, fvfm) %>%
+  mutate(geno = case_when(nursery == "mote" ~ paste0("ML", geno), 
+                          nursery == "fwc" ~ paste0("FM", geno),
+                          TRUE ~ geno))
+
+# Combine May and Oct data, and select only genos incuded in both
+df <- bind_rows(may = may, oct  = oct, .id = "date") %>%
+  group_by(nursery, geno) %>%
+  filter(n_distinct(date) == 2) %>%
+  ungroup()
+
+```
+
+```{r}
+# Fit dose response curves
+df$genoN <- factor(paste0("g", group_indices(df, nursery, geno, date)))
+
+m3f <- drm(fvfm ~ max_temp, genoN, data = df,
+          fct = LL.3(names = c('hill', 'max', 'ED50')),
+          lowerl = c(20, 0.6, 30),
+          upperl = c(100, 0.7, 40),    # upper limit of 100 on hill parameter
+          pmodels = data.frame(genoN, genoN, genoN))  # all genos have independent maximum
+
+```
+
+```{r}
+# Tidy model output and join ED50 estimates with sample metadata
+res3f <- tidy(m3f) %>%
+  filter(term == "ED50") %>%
+  mutate(genoN = curve) %>%
+  left_join(distinct(df, date, nursery, geno, genoN)) %>%
+  mutate(genoN = factor(genoN, levels = genoN[order(estimate)]))
+# Get fitted/predicted values to look at fits for each genotype
+pred3f <- augment(m3f, data.frame(m3f$data)) %>%
+  mutate(genoN = genoN.1) %>%
+  left_join(select(res3f, geno, genoN, nursery, date, ed50 = estimate)) %>%     # add ed50 values
+  full_join(df) %>%
+  mutate(genoN = factor(genoN, levels = levels(res3f$genoN)))
+
+# Plot for each nursery
+# Define function to plot raw data, fitted values, and ed50 for each genotype
+plotfits <- function(data) {
+  ggplot(data = data, aes(x = max_temp)) +
+    geom_point(aes(y = fvfm, color = abs(.resid) < 0.15), pch = 4, size = 1.25) +
+    geom_point(aes(y = fvfm), pch = 1, size = 2) +
+    geom_line(data = drop_na(data, .fitted),
+              aes(y = .fitted)) +
+    geom_vline(data = distinct(data, geno, date, ed50), 
+               aes(xintercept = ed50), 
+               lwd = 0.2, lty = 2) +
+    geom_text(data = distinct(data, geno, date, ed50),
+              aes(x = ed50, y = 0.05, label = round(ed50, 2)), 
+              hjust = 1, nudge_x = -0.2, size = 3) +
+    facet_wrap(~ geno + date)
+}
+
+plotfits(data = filter(pred3f, nursery == "um"))
+plotfits(data = filter(pred3f, nursery == "fwc"))
+plotfits(data = filter(pred3f, nursery == "mote"))
+```
+
+```{r}
+# Plot Oct. vs. May ED50 values
+ed50 <- res3f %>%
+  select(nursery, geno, date, ed50 = estimate, se = std.error) %>%
+  pivot_wider(names_from = date,  values_from = c(ed50, se))
+
+# Remove genotypes with fewer than 10 data points
+lown <- df %>%
+  group_by(geno, nursery, date) %>%
+  filter(n() < 10) %>%
+  distinct(geno, nursery, date)
+ed50f <- anti_join(ed50, lown) %>%
+  filter(nursery == "mote")
+
+# Fit linear and Passing-Bablok regressions
+PBreg <- mcreg(ed50f$ed50_may, ed50f$ed50_oct, method.reg = "PaBa",  method.ci = "bootstrap", nsamples = 9999)
+bounds <- with(ed50f, range(c(ed50_may - se_may, ed50_may + se_may), na.rm = TRUE))
+newdata <- tibble(ed50_may = seq(bounds[1], bounds[2], 0.01))
+PBfit <- calcResponse(PBreg, x.levels = newdata$ed50_may, alpha = 0.05) %>%
+  as_tibble()
+
+# Plot figure
+fig <- ggplot(ed50f, aes(y = ed50_oct, x = ed50_may)) +
+  geom_errorbar(aes(xmin = ed50_may - se_may, xmax = ed50_may + se_may), lwd = 0.25) +
+  geom_errorbar(aes(ymin = ed50_oct - se_oct, ymax = ed50_oct + se_oct), lwd = 0.25) +
+  geom_point() +
+  labs(x = "ED50 (°C) measured in May", y = "ED50 (°C) measured in Oct.")
+
+fig +
+  geom_line(data = PBfit, aes(x = X, y = Y), color = "blue") +
+  geom_ribbon(data = PBfit, aes(x = X, ymin = Y.LCI, ymax = Y.UCI), 
+              inherit.aes = FALSE, alpha = 0.2, fill = "blue") +
+  coord_cartesian(xlim = c(34.75,35.9), ylim=c(34.75,36.7)) +
+  annotate(geom = "text", x = 34.75, y = 36.6, label = "Pearson's correlation:", adj = 0) +
+  stat_cor(method = "pearson", label.y = 36.5, label.x = 34.8) +
+  annotate(geom = "text", x = 34.75, y = 36.4, label = "Spearman's rank correlation:", adj = 0) +
+  stat_cor(method = "spearman", label.y = 36.3, label.x = 34.8) +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "maroon")
+```
+
+```{r, include = F, eval = F}
+# What if we try fitting dose-response curves for each genotype including data from both dates, where pmodels constrain fits to have the same maximum and slope, and only the ed50 can vary by date?
+dd <- df %>%
+  group_by(geno, nursery, date) %>%
+  filter(n() >= 10) %>%
+  ungroup()
+
+fitdrc <- function(data) {
+  drm(fvfm ~ max_temp, date, data = data,
+      fct = LL.3(names = c('hill', 'max', 'ED50')),
+      lowerl = c(20, 0.6, 30),
+      upperl = c(100, 0.7, 40),    # upper limit of 100 on hill parameter
+      pmodels = data.frame(date, date, date))}  # all genos have independent maximum
+
+df2 <- dd %>%
+  nest(data = c(date, max_temp, fvfm, alt_name, ugeno, source_lat, source_lon, note, genoN)) %>%
+  mutate(mod = map(data, fitdrc),
+         res = map(mod, tidy))
+
+df3 <- df2 %>%
+  unnest(res) %>%
+  filter(term == "ED50", nursery == "mote") %>%
+  select(nursery, geno, curve, estimate, std.error) %>%
+  pivot_wider(names_from = curve, values_from = c(estimate, std.error))
+
+ggplot(df3, aes(x = estimate_may, y = estimate_oct)) +
+  geom_point() +
+  geom_label(aes(label = geno)) +
+  geom_smooth(method = "lm") +
+  stat_cor(method = "pearson")
+```
+
+
+
+
+```{r, include= F, eval = F}
+
+Dem.reg <- mcreg(ed50f$ed50_may, ed50f$ed50_oct, method.reg = "WDeming")
+plot(Dem.reg)
+compareFit(PBreg, Dem.reg)
+
+
+library(deming)
+fit.lm <- lm(ed50_oct ~ ed50_may, data=ed50f)
+fit.deming <- deming(ed50_oct ~ ed50_may, data=ed50f, stdpat = c(1, 0, 1, 0))
+fit.errors <- deming(ed50_oct ~ ed50_may, data=ed50f, xstd=se_may, ystd=se_oct)
+fit.pb <- pbreg(ed50_oct ~ ed50_may, data = ed50f)
+
+plot(ed50_oct ~ ed50_may, data=ed50f)
+abline(fit.lm, lty = 2)
+abline(fit.deming, col = "red")
+abline(fit.errors, col = "blue")
+abline(fit.pb, col = "orange")
+
+```
+
+
+
+
+
