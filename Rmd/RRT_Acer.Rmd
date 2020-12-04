@@ -72,7 +72,8 @@ arduinolog <- bind_rows(b1log, b2log, b3log) %>%
 #### Import HOBO temperature logs for Inkbird-controlled tanks
 ```{r}
 # Read in HOBO temperature logs
-hobologfiles <- list.files("data/20201007_RRT_Acer/temperature/hobo", pattern = ".xlsx", full.names = TRUE)
+hobologfiles <- list.files("data/20201007_RRT_Acer/temperature/hobo", 
+                           pattern = ".xlsx", full.names = TRUE)
 hobolog <- tibble(filename = hobologfiles) %>%
   mutate(log = map(filename, read_xlsx, skip = 1)) %>%
   unnest()
