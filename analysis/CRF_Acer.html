@@ -664,6 +664,7 @@ plotfits(data = fvals)</code></pre>
 fvals %&gt;%
   select(nursery, geno, max_temp, fvfm) %&gt;%
   drop_na() %&gt;%
+  mutate(date = &quot;2020-10&quot;) %&gt;%
   write_csv(&quot;data/processed/crf_fvfm_clean.csv&quot;)</code></pre>
 </div>
 

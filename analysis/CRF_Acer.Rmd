@@ -307,6 +307,7 @@ fvals %>%
 fvals %>%
   select(nursery, geno, max_temp, fvfm) %>%
   drop_na() %>%
+  mutate(date = "2020-10") %>%
   write_csv("data/processed/crf_fvfm_clean.csv")
 ```
 
