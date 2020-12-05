@@ -17,6 +17,7 @@ library(ggthemes)
 library(drc)
 library(broom)
 library(tidyverse)
+library(joeyr)
 ```
 
 # CBASS temperature logs
@@ -153,22 +154,47 @@ df <- dpii %>%
   mutate(nursery = "rrt") %>%
   select(nursery, geno, f, fm, fvfm, max_temp)
 
+# Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
+out <- df %>%
+  filter(max_temp >= 36) %>%
+  #drop_na(fvfm) %>%
+  replace_na(replace = list(fvfm = 0, f = 0)) %>%
+  #group_by(max_temp) %>%
+  mutate(mahal = tidy_mahalanobis(f, fvfm),
+         is_out = mahal > median(mahal) & f < median(f) & fvfm > median(fvfm))
+out1 <- out %>%
+  filter(!is_out) %>%
+  mutate(mahal = tidy_mahalanobis(f, fvfm),
+         is_out = mahal > median(mahal) & f < median(f) & fvfm > median(fvfm))
+out2 <- full_join(out, out1, 
+                  by = c("nursery", "geno", "f", "fm", "fvfm", "max_temp")) %>%
+  mutate(is_out = is_out.x | is_out.y) %>%
+  select(nursery, geno, f, fm, fvfm, max_temp, is_out)
+# Plot showing those outliers
+ggplot(out2, aes(x = f, y = fvfm)) +
+  geom_point(aes(shape = is_out, color = factor(max_temp))) +
+  scale_shape_manual(values = c(19, 25))
+
 df <- df %>%
   # Omit rows for one coral that had missing pam data at 32°C
   filter(!(geno == "ML1" & max_temp == 32)) %>%
   # Save raw fvfm in new column
   mutate(fvfmraw = fvfm) %>%          
   # Make missing values zero (these were all high temp / no signal)
-  replace_na(replace = list(fvfm = 0)) %>%      
+  replace_na(replace = list(fvfm = 0, f = 0)) %>%   
+  # Merge with mahalanobis outlier info from above
+  left_join(out2) %>%
   # Identify problematic data points
   mutate(problem = case_when(
     fvfm > 0.750 ~ "abnormally high",
-    max_temp >= 36 & fvfm >= 0.3 & f <= 250 ~ "abnormally high w/ low Ft",
+    #max_temp >= 36 & fvfm >= 0.3 & f <= 250 ~ "abnormally high w/ low Ft",
+    is_out ~ "abnormally high w/ low Ft",
     TRUE ~ "none")) %>%
   mutate(fvfm = case_when(
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
     problem == "abnormally high w/ low Ft" ~ 0,
-    problem == "none" ~ fvfm))
+    problem == "none" ~ fvfm)) %>%
+  select(nursery, geno, f, fm, fvfm, max_temp, fvfmraw, problem)
 
 df %>% count(problem)
 ```
@@ -207,11 +233,15 @@ vals <- initmods %>%
   rename(ed50 = estimate)
 
 # Identify problematic data points based on cook's distance and residuals
+counts <- vals %>% 
+  group_by(nursery, geno) %>% 
+  summarise(n = sum(!is.na(fvfm)))
 dff <- vals %>%
+  left_join(counts) %>%
   group_by(nursery, geno) %>%
   mutate(resid.thresh = 1.5*sd(.resid, na.rm = T)) %>%  # Calculate residual threshold as 2 standard deviations
-  mutate(cooksd.thresh = 4/n()) %>%   # Calculate cook's distance threshold as 4/n
-  mutate(max_to_remove = floor(n() * 0.25)) %>%
+  mutate(cooksd.thresh = 4/n) %>%   # Calculate cook's distance threshold as 4/n
+  mutate(max_to_remove = floor(n * 0.25)) %>%
   ungroup() %>%
   mutate(problem = case_when(.cooksd > cooksd.thresh & .resid > 0 ~ "high cook's distance",
                              .resid > resid.thresh ~ "high residual", 
@@ -273,6 +303,15 @@ plotfits <- function(data) {
 
 # Plot fits
 plotfits(data = fvals)
+
+hi <- fvals %>% filter(geno == "FM6(A)")
+```
+
+# Summarize data filtering
+```{r}
+fvals %>%
+  count(problem) %>%
+  mutate(freq = n / sum(n))
 ```
 
 # Save processed data to file
@@ -281,5 +320,6 @@ plotfits(data = fvals)
 fvals %>%
   select(nursery, geno, max_temp, fvfm) %>%
   drop_na() %>%
+  mutate(date = "2020-10") %>%
   write_csv("data/processed/RRT_fvfm_clean.csv")
 ```
