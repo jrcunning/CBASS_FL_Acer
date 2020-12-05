@@ -1,0 +1,169 @@
+---
+title: "Dose-response curves for PAM data from FL genotype swap CBASS runs"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(drc)
+library(furrr)
+library(broom)
+library(tidyverse)
+```
+
+# Data import and model fitting
+
+Thermal tolerance is assessed for each genotype by analyzing the decrease in Fv/Fm as the heat stress temperature increases. For each genotype, a logistic regression is fit for Fv/Fm as a function of temperature, and a tolerance value is calculated as the temperature at which Fv/Fm is reduced by 50% (analagous to an LD50 value).
+
+```{r import}
+#### Import data
+df <- read_csv("data/raw/20200628_Genoswap_Acer/CBASS_Master_data_clean.csv") %>%
+  mutate(Temp = parse_number(Tank)) %>%
+  select(-X1, -Notes.Corrections) %>%
+  mutate(Genotype = gsub(" ", "", Genotype))
+
+# filter out outliers and initial time point
+df <- df %>%
+  drop_na() %>%
+  filter(Y < 1, Timepoint == "Final") %>%
+  droplevels()
+
+# Rename some variables
+df <- df %>%
+  select(nursery = Source, geno = Genotype, tileID, max_temp = Temp, fvfm = Y) %>%
+  mutate(nursery = fct_recode(nursery, crf = "CRF", nsu = "Broward", um = "UM",
+                              mote = "Mote", fwc = "FWC"))
+
+# filter out corals with not enough data
+df <- df %>%
+  group_by(nursery, geno) %>%
+  filter(n() >= 10) %>%  # remove corals with fewer than 10 data points
+  filter(n_distinct(max_temp) >= 5) %>%
+  ungroup()
+```
+
+# Initial data filtering and QC
+```{r filter}
+df <- df %>%
+  # Save raw fvfm data in new column
+  mutate(fvfmraw = fvfm) %>%          
+  # Identify problematic data points
+  mutate(problem = case_when(
+    fvfm > 0.750 ~ "abnormally high",
+    TRUE ~ "none")) %>%
+  mutate(fvfm = case_when(
+    problem == "abnormally high" ~ NA_real_,      # Change abnormally high values to NA
+    problem == "none" ~ fvfm))
+```
+
+# Initial model fitting and outlier detection
+```{r model}
+# Define function to fit 3-parameter LL model to data and return NULL if fitting error
+ll3 <- function(data) {
+  drm(fvfm ~ max_temp, data = data, 
+      fct = LL.3(names = c("hill", "max", "ED50")),
+      upperl = c(100, 0.75, 40),
+      lowerl = c(20, 0.50, 30))}
+tryll3 <- possibly(ll3, otherwise = NULL)
+
+# Fit model to each coral, get parameters, fitted values, and residuals
+initmods <- df %>%
+  nest(data = c(tileID, max_temp, fvfmraw, fvfm, problem)) %>%
+  # Fit the model to each coral
+  mutate(ll3 = map(data, tryll3)) %>%
+  # Get model parameters and fitted values/residuals
+  mutate(pars = map(ll3, tidy),
+         pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
+
+# Extract ed50 parameter values from model fits
+ed50 <- initmods %>% 
+  select(nursery, geno, pars) %>%
+  unnest(pars) %>%
+  filter(term == "ED50")
+
+# Collect raw data, fitted values, and diagnostics
+vals <- initmods %>%
+  select(nursery, geno, pred) %>%
+  unnest(pred) %>%
+  full_join(ed50) %>%
+  full_join(df) %>%
+  rename(ed50 = estimate)
+
+# Identify problematic data points based on cook's distance and residuals
+dff <- vals %>%
+  group_by(nursery, geno) %>%
+  mutate(resid.thresh = 2*sd(.resid)) %>%  # Calculate residual threshold as 3 standard deviations
+  mutate(cooksd.thresh = 4/n()) %>%   # Calculate cook's distance threshold as 4/n
+  mutate(max_to_remove = floor(n() * 0.25)) %>%
+  ungroup() %>%
+  mutate(problem = case_when(.cooksd > cooksd.thresh ~ "high cook's distance",
+                             abs(.resid) > resid.thresh ~ "high residual", 
+                             TRUE ~ problem)) %>%
+  group_by(nursery, geno, outlier = problem %in% c("high cook's distance", "high residual")) %>%
+  mutate(n.outliers = n(),
+         rank.out = order(.cooksd)) %>%
+  ungroup() %>%
+  mutate(fvfm = case_when(outlier & rank.out <= max_to_remove ~ NA_real_, 
+                          TRUE ~ fvfm)) 
+
+# Refit models without problematic points
+fmods <- dff %>%
+  select(nursery, geno, tileID, max_temp, fvfmraw, problem, fvfm) %>%
+  nest(data = c(tileID, max_temp, fvfmraw, fvfm, problem)) %>%
+  # Fit the model to each coral
+  mutate(ll3 = map(data, tryll3)) %>%
+  # Get model parameters and fitted values/residuals
+  mutate(pars = map(ll3, tidy),
+         pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
+
+# Extract ed50 parameter values from model fits
+fed50 <- fmods %>% 
+  select(nursery, geno, pars) %>%
+  unnest(pars) %>%
+  filter(term == "ED50")
+
+# Collect raw data, fitted values, and ed50 estimates
+fvals <- fmods %>%
+  select(nursery, geno, pred) %>%
+  unnest(pred) %>%
+  full_join(fed50) %>%
+  full_join(select(dff, nursery, geno, tileID, max_temp, fvfmraw, problem, fvfm)) %>%
+  rename(ed50 = estimate)
+```
+
+```{r plot, fig.width = 10, fig.height = 10}
+# Define function to plot raw data, fitted values, and ed50 for each genotype
+plotfits <- function(data) {
+  ggplot(data = data, aes(x = max_temp)) +
+    geom_point(pch = 4, size = 1.25,
+               aes(y = fvfmraw, color = factor(problem, levels = c("none", "abnormally high", 
+                                              "abnormally high w/ low Ft", 
+                                              "high residual", "high cook's distance")))) +
+    geom_point(aes(y = fvfm), pch = 1, size = 2) +
+    geom_line(data = drop_na(data, .fitted),
+              aes(y = .fitted)) +
+    geom_vline(data = distinct(data, nursery, geno, ed50), 
+               aes(xintercept = ed50), 
+               lwd = 0.2, lty = 2) +
+    geom_text(data = distinct(data, nursery, geno, ed50),
+              aes(x = ed50, y = 0.05, label = round(ed50, 2)), 
+              hjust = 1, nudge_x = -0.2, size = 3) +
+    facet_wrap(~ nursery + geno, drop = TRUE) +
+    scale_color_manual(name = "problem", drop = FALSE,
+                       values = c("black", "red", "orange", "blue", "turquoise"))
+}
+
+# Plot fits
+plotfits(data = fvals)
+```
+
+# Save processed data to file
+```{r save}
+# Write tidy data to file
+fvals %>%
+  select(nursery, geno, max_temp, fvfm) %>%
+  drop_na() %>%
+  write_csv("data/processed/Genoswap_fvfm_clean.csv")
+```
+
