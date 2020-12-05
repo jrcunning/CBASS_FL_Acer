@@ -14,7 +14,10 @@ library(lubridate)
 library(scales)
 library(readxl)
 library(ggthemes)
+library(drc)
+library(broom)
 library(tidyverse)
+library(joeyr)
 ```
 
 # CBASS temperature logs
@@ -54,8 +57,8 @@ readlog <- function(logfile, prefix) {
 }
 
 # Read in arduino log files
-b1log <- readlog("data/20201011_Mote_Acer/temperature/sdlog/20201011_BOX1_LOG.TXT", prefix = "B1")
-b2log <- readlog("data/20201011_Mote_Acer/temperature/sdlog/20201011_BOX2_LOG.TXT", prefix = "B2")
+b1log <- readlog("data/raw/20201011_Mote_Acer/temperature/sdlog/20201011_BOX1_LOG.TXT", prefix = "B1")
+b2log <- readlog("data/raw/20201011_Mote_Acer/temperature/sdlog/20201011_BOX2_LOG.TXT", prefix = "B2")
 
 # Tidy arduino log files for this run
 arduinolog <- bind_rows(b1log, b2log) %>%
@@ -71,7 +74,7 @@ arduinolog <- bind_rows(b1log, b2log) %>%
 #### Import HOBO temperature logs for Inkbird-controlled tanks
 ```{r}
 # Read in HOBO temperature logs
-hobologfiles <- list.files("data/20201011_Mote_Acer/temperature/hobo", pattern = ".xlsx", full.names = TRUE)
+hobologfiles <- list.files("data/raw/20201011_Mote_Acer/temperature/hobo", pattern = ".xlsx", full.names = TRUE)
 hobolog <- tibble(filename = hobologfiles) %>%
   mutate(log = map(filename, read_xlsx, skip = 1)) %>%
   unnest()
@@ -92,7 +95,7 @@ hobolog <- hobolog %>%
   filter(date(dttm) == "2020-10-11")
 
 # Import inkbird setpoints
-inkbird_sp <- read_csv("data/inkbird_settings.csv") %>%
+inkbird_sp <- read_csv("data/program_files/inkbird_settings.csv") %>%
   pivot_longer(2:5, names_to = "max_temp", values_to = "sp") %>%
   mutate(max_temp = as.numeric(str_extract(max_temp, "[0-9]+")),
          dttm = ymd_hms(paste("2020-10-11", time)), hm = format(dttm, "%H:%M"),
@@ -120,7 +123,7 @@ ggplot(templog, mapping = aes(x = dttm, y = temp, group = tank_id)) +
   theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(x = "Time of day", y = "Temperature (°C)")
 
-write_csv(templog, "data/20201011_Mote_Acer/temperature/Mote_tempdata.csv")
+#write_csv(templog, "data/20201011_Mote_Acer/temperature/Mote_tempdata.csv")
 ```
 
 # PAM data
@@ -128,7 +131,7 @@ write_csv(templog, "data/20201011_Mote_Acer/temperature/Mote_tempdata.csv")
 #### Import data from DIVING PAM II
 ```{r}
 # Read manually entered data from Diving PAM II
-path <- "data/20201011_Mote_Acer/PAM/20201011dii_Acer.xlsx"
+path <- "data/raw/20201011_Mote_Acer/PAM/20201011dii_Acer.xlsx"
 dpii <- path %>%
   excel_sheets() %>%
   set_names() %>%
@@ -143,22 +146,168 @@ dpii <- path %>%
 tanks <- read_csv("data/tank_setup.csv")
 dpii <- full_join(dpii, tanks) %>%
   select(geno, f, fm, fvfm, tank_id, tank_set, max_temp)
-
-# Write collated data to file
-write_csv(dpii, "data/20201011_Mote_Acer/PAM/Mote_pamdata.csv")
 ```
 
-#### Plot raw PAM data
+# Initial data filtering and QC
+```{r}
+df <- dpii %>%
+  mutate(nursery = "mote") %>%
+  select(nursery, geno, f, fm, fvfm, max_temp)
 
-Color indicates possible outliers
+# Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
+out <- df %>%
+  filter(max_temp >= 36) %>%
+  #drop_na(fvfm) %>%
+  replace_na(replace = list(fvfm = 0, f = 0)) %>%
+  mutate(mahal = tidy_mahalanobis(f, fvfm),
+         is_out = mahal > median(mahal) & f < median(f) & fvfm > median(fvfm))
+# Plot showing those outliers
+ggplot(out, aes(x = f, y = fvfm)) +
+  geom_point(aes(shape = is_out, color = factor(max_temp))) +
+  scale_shape_manual(values = c(19, 25))
 
-```{r, fig.height = 10, fig.width = 10}
-dpii %>%
-  # If fvfm is NA, replace with zero
-  replace_na(replace = list(fvfm = 0)) %>%
-  ggplot(aes(x = max_temp, y = fvfm)) +
-  geom_point(aes(color = max_temp >= 36 & fvfm >= 0.4 & f <= 250)) +
-  facet_wrap(~ geno) +
-  theme(legend.position = "none")
+df <- df %>%
+  # Save raw fvfm in new column
+  mutate(fvfmraw = fvfm) %>%          
+  # Make missing values zero (these were all high temp / no signal)
+  replace_na(replace = list(fvfm = 0)) %>%   
+  # Merge with mahalanobis outlier info from above
+  left_join(out) %>%
+  # Identify problematic data points
+  mutate(problem = case_when(
+    fvfm > 0.750 ~ "abnormally high",
+    #max_temp >= 36 & fvfm >= 0.3 & f <= 250 ~ "abnormally high w/ low Ft",
+    is_out ~ "abnormally high w/ low Ft",
+    TRUE ~ "none")) %>%
+  mutate(fvfm = case_when(
+    problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
+    problem == "abnormally high w/ low Ft" ~ 0,
+    problem == "none" ~ fvfm)) %>%
+  select(nursery, geno, f, fm, fvfm, max_temp, fvfmraw, problem)
+
+df %>% count(problem)
+```
+
+# Initial model fitting and outlier detection
+```{r model}
+# Define function to fit 3-parameter LL model to data and return NULL if fitting error
+ll3 <- function(data) {
+  drm(fvfm ~ max_temp, data = data, 
+      fct = LL.3(names = c("hill", "max", "ED50")),
+      upperl = c(100, 0.75, 40),
+      lowerl = c(30, 0.50, 30))}
+tryll3 <- possibly(ll3, otherwise = NULL)
+
+# Fit model to each coral, get parameters, fitted values, and residuals
+initmods <- df %>%
+  nest(data = c(max_temp, f, fm, fvfmraw, problem, fvfm)) %>%
+  # Fit the model to each coral
+  mutate(ll3 = map(data, tryll3)) %>%
+  # Get model parameters and fitted values/residuals
+  mutate(pars = map(ll3, tidy),
+         pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
+
+# Extract ed50 parameter values from model fits
+ed50 <- initmods %>% 
+  select(nursery, geno, pars) %>%
+  unnest(pars) %>%
+  filter(term == "ED50")
+
+# Collect raw data, fitted values, and diagnostics
+vals <- initmods %>%
+  select(nursery, geno, pred) %>%
+  unnest(pred) %>%
+  full_join(ed50) %>%
+  full_join(df) %>%
+  rename(ed50 = estimate)
+
+# Identify problematic data points based on cook's distance and residuals
+counts <- vals %>% 
+  group_by(nursery, geno) %>% 
+  summarise(n = sum(!is.na(fvfm)))
+dff <- vals %>%
+  left_join(counts) %>%
+  group_by(nursery, geno) %>%
+  mutate(resid.thresh = 2*sd(.resid, na.rm = T)) %>%  # Calculate residual threshold as 2 standard deviations
+  mutate(cooksd.thresh = 4/n) %>%   # Calculate cook's distance threshold as 4/n
+  mutate(max_to_remove = floor(n * 0.25)) %>%
+  ungroup() %>%
+  mutate(problem = case_when(.cooksd > cooksd.thresh & .resid > 0 ~ "high cook's distance",
+                             .resid > resid.thresh ~ "high residual", 
+                             TRUE ~ problem)) %>%
+  group_by(nursery, geno, outlier = problem %in% c("high cook's distance", "high residual")) %>%
+  mutate(n.outliers = n(),
+         rank.out = order(.cooksd)) %>%
+  ungroup() %>%
+  mutate(fvfm = case_when(outlier & rank.out <= max_to_remove ~ NA_real_, 
+                          TRUE ~ fvfm)) 
+
+
+# Refit models without problematic points
+fmods <- dff %>%
+  select(nursery, geno, max_temp, f, fm, fvfmraw, problem, fvfm) %>%
+  nest(data = c(max_temp, f, fm, fvfmraw, fvfm, problem)) %>%
+  # Fit the model to each coral
+  mutate(ll3 = map(data, tryll3)) %>%
+  # Get model parameters and fitted values/residuals
+  mutate(pars = map(ll3, tidy),
+         pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
+
+# Extract ed50 parameter values from model fits
+fed50 <- fmods %>% 
+  select(nursery, geno, pars) %>%
+  unnest(pars) %>%
+  filter(term == "ED50")
+
+# Collect raw data, fitted values, and ed50 estimates
+fvals <- fmods %>%
+  select(nursery, geno, pred) %>%
+  unnest(pred) %>%
+  full_join(fed50) %>%
+  full_join(select(dff, nursery, geno, max_temp, f, fm, fvfmraw, problem, fvfm)) %>%
+  rename(ed50 = estimate)
+```
+
+```{r plot, fig.width = 10, fig.height = 10}
+# Define function to plot raw data, fitted values, and ed50 for each genotype
+plotfits <- function(data) {
+  ggplot(data = data, aes(x = max_temp)) +
+    geom_point(pch = 4, size = 1.25,
+               aes(y = fvfmraw, color = factor(problem, levels = c("none", "abnormally high", 
+                                              "abnormally high w/ low Ft", 
+                                              "high residual", "high cook's distance")))) +
+    geom_point(aes(y = fvfm), pch = 1, size = 2) +
+    geom_line(data = drop_na(data, .fitted),
+              aes(y = .fitted)) +
+    geom_vline(data = distinct(data, nursery, geno, ed50), 
+               aes(xintercept = ed50), 
+               lwd = 0.2, lty = 2) +
+    geom_text(data = distinct(data, nursery, geno, ed50),
+              aes(x = ed50, y = 0.05, label = round(ed50, 2)), 
+              hjust = 1, nudge_x = -0.2, size = 3) +
+    facet_wrap(~ nursery + geno, drop = TRUE) +
+    scale_color_manual(name = "problem", drop = FALSE,
+                       values = c("black", "red", "orange", "blue", "turquoise"))
+}
+
+# Plot fits
+plotfits(data = fvals)
+```
+
+# Summarize data filtering
+```{r}
+fvals %>%
+  count(problem) %>%
+  mutate(freq = n / sum(n))
+```
+
+# Save processed data to file
+```{r save}
+# Write tidy data to file
+fvals %>%
+  select(nursery, geno, max_temp, fvfm) %>%
+  drop_na() %>%
+  mutate(date = "2020-10") %>%
+  write_csv("data/processed/mote_fvfm_clean.csv")
 ```
 

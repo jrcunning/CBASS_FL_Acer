@@ -97,7 +97,7 @@ ggplot(mapping = aes(x = dttm, y = Temp, group = tank)) +
 df <- read_csv("data/raw/20200820_KJSNSU_Acer/PAM/KJS_pamdata_tidy.csv")
 
 df <- df %>%
-  mutate(nursery = "kjs",
+  mutate(nursery = "nsu",
          geno = paste0("kjs", Genotype)) %>%
   select(nursery, geno, f, fm, fvfm, max_temp = Final_Temp) %>%
   drop_na(fvfm)
@@ -188,12 +188,19 @@ vals <- initmods %>%
 #   geom_point(aes(color = mahal_dist > 20)) +
 #   facet_wrap(~geno)
 
+
+  
+
 # Identify problematic data points based on cook's distance and residuals
+counts <- vals %>% 
+  group_by(nursery, geno) %>% 
+  summarise(n = sum(!is.na(fvfm)))
 dff <- vals %>%
+  left_join(counts) %>%
   group_by(nursery, geno) %>%
   mutate(resid.thresh = 2*sd(.resid)) %>%  # Calculate residual threshold as 2 standard deviations
-  mutate(cooksd.thresh = 4/n()) %>%   # Calculate cook's distance threshold as 4/n
-  mutate(max_to_remove = floor(n() * 0.25)) %>%
+  mutate(cooksd.thresh = 4/n) %>%   # Calculate cook's distance threshold as 4/n
+  mutate(max_to_remove = floor(n * 0.25)) %>%
   ungroup() %>%
   mutate(problem = case_when(.cooksd > cooksd.thresh & .resid > 0 ~ "high cook's distance",
                              .resid > resid.thresh ~ "high residual", 
@@ -263,6 +270,7 @@ plotfits(data = fvals)
 fvals %>%
   select(nursery, geno, max_temp, fvfm) %>%
   drop_na() %>%
+  mutate(date = "2020-08") %>%
   write_csv("data/processed/KJS_fvfm_clean.csv")
 ```
 

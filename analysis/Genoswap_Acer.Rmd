@@ -29,8 +29,15 @@ df <- df %>%
   filter(Y < 1, Timepoint == "Final") %>%
   droplevels()
 
+# df %>%
+#   filter(Temp == 33) %>%
+#   ggplot(aes(x = factor(Picture), y = Y)) +
+#   geom_boxplot()
+#The above  figure shows that two PAM images  from one of the 33° tanks are abnormally low -- remove these values below
+
 # Rename some variables
 df <- df %>%
+  filter(!(Temp == 33 & Picture %in% c(3, 22))) %>%
   select(nursery = Source, geno = Genotype, tileID, max_temp = Temp, fvfm = Y) %>%
   mutate(nursery = fct_recode(nursery, crf = "CRF", nsu = "Broward", um = "UM",
                               mote = "Mote", fwc = "FWC"))
@@ -91,11 +98,15 @@ vals <- initmods %>%
   rename(ed50 = estimate)
 
 # Identify problematic data points based on cook's distance and residuals
+counts <- vals %>% 
+  group_by(nursery, geno) %>% 
+  summarise(n = sum(!is.na(fvfm)))
 dff <- vals %>%
+  left_join(counts) %>%
   group_by(nursery, geno) %>%
-  mutate(resid.thresh = 2*sd(.resid)) %>%  # Calculate residual threshold as 3 standard deviations
-  mutate(cooksd.thresh = 4/n()) %>%   # Calculate cook's distance threshold as 4/n
-  mutate(max_to_remove = floor(n() * 0.25)) %>%
+  mutate(resid.thresh = 2*sd(.resid, na.rm = TRUE)) %>%  # Calculate residual threshold as 3 standard deviations
+  mutate(cooksd.thresh = 4/n) %>%   # Calculate cook's distance threshold as 4/n
+  mutate(max_to_remove = floor(n * 0.15)) %>%
   ungroup() %>%
   mutate(problem = case_when(.cooksd > cooksd.thresh ~ "high cook's distance",
                              abs(.resid) > resid.thresh ~ "high residual", 
@@ -164,6 +175,7 @@ plotfits(data = fvals)
 fvals %>%
   select(nursery, geno, max_temp, fvfm) %>%
   drop_na() %>%
+  mutate(date = "2020-06") %>%
   write_csv("data/processed/Genoswap_fvfm_clean.csv")
 ```
 
