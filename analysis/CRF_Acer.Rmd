@@ -17,6 +17,7 @@ library(ggthemes)
 library(drc)
 library(broom)
 library(tidyverse)
+library(joeyr)
 ```
 
 # CBASS temperature logs
@@ -155,48 +156,25 @@ df <- dpii %>%
   mutate(nursery = "crf") %>%
   select(nursery, geno, f, fm, fvfm, max_temp)
 
-library(joeyr)
-test <- df %>%
-  filter(max_temp >= 36) %>%
-  #drop_na(fvfm) %>%
-  replace_na(replace = list(fvfm = 0, f = 0, fm = 0)) %>%
-  mutate(mahal = tidy_mahalanobis(f, fvfm))
-median(test$mahal)
-ggplot(test, aes(x = f, y = fvfm)) +
-  geom_point(aes(color = mahal > 1.8, shape = factor(max_temp))) +
-  stat_ellipse(level = 0.67)
-
-test2 <- df %>%
-  filter(max_temp >= 36) %>%
-  replace_na(replace = list(fvfm = 0, f = 0, fm = 0)) %>%
-  group_by(max_temp) %>%
-  mutate(mahal = tidy_mahalanobis(f, fvfm),
-         is_out = mahal > median(mahal) & fvfm > median(fvfm) & f < median(f))
-ggplot(test2, aes(x = f, y = fvfm)) +
-  geom_point(aes(shape = is_out, color = factor(max_temp))) +
-  scale_shape_manual(values = c(19, 25))
-
-
-
-
-
+# Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
 out <- df %>%
   filter(max_temp >= 36) %>%
+  #drop_na(fvfm) %>%
   replace_na(replace = list(fvfm = 0, f = 0)) %>%
   mutate(mahal = tidy_mahalanobis(f, fvfm),
          is_out = mahal > median(mahal) & f < median(f) & fvfm > median(fvfm))
-
+# Plot showing those outliers
 ggplot(out, aes(x = f, y = fvfm)) +
   geom_point(aes(shape = is_out, color = factor(max_temp))) +
   scale_shape_manual(values = c(19, 25))
 
-
+# Filter fvfm values based on various outlier classifications
 df <- df %>%
   # Save raw fvfm in new column
   mutate(fvfmraw = fvfm) %>%          
   # Make missing values zero (these were all high temp / no signal)
   replace_na(replace = list(fvfm = 0, f = 0)) %>%   
-  # Merge with mahalanobis outlier info
+  # Merge with mahalanobis outlier info from above
   left_join(out) %>%
   # Identify problematic data points
   mutate(problem = case_when(
@@ -207,14 +185,10 @@ df <- df %>%
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
     problem == "abnormally high w/ low Ft" ~ 0,
     problem == "none" ~ fvfm))
-
-df %>% count(problem)
-
-
 ```
 
 # Initial model fitting and outlier detection
-```{r model}
+```{r model, results = 'hide'}
 # Define function to fit 3-parameter LL model to data and return NULL if fitting error
 ll3 <- function(data) {
   drm(fvfm ~ max_temp, data = data, 
@@ -317,6 +291,13 @@ plotfits <- function(data) {
 
 # Plot fits
 plotfits(data = fvals)
+```
+
+# Summarize data filtering
+```{r}
+fvals %>%
+  count(problem) %>%
+  mutate(freq = n / sum(n))
 ```
 
 # Save processed data to file
