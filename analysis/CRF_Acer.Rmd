@@ -184,7 +184,8 @@ df <- df %>%
   mutate(fvfm = case_when(
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
     problem == "abnormally high w/ low Ft" ~ 0,
-    problem == "none" ~ fvfm))
+    problem == "none" ~ fvfm)) %>%
+  select(nursery, geno, f, fm, fvfm, max_temp, fvfmraw, problem)
 ```
 
 # Initial model fitting and outlier detection
