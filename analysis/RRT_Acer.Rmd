@@ -195,8 +195,6 @@ df <- df %>%
     problem == "abnormally high w/ low Ft" ~ 0,
     problem == "none" ~ fvfm)) %>%
   select(nursery, geno, f, fm, fvfm, max_temp, fvfmraw, problem)
-
-df %>% count(problem)
 ```
 
 # Initial model fitting and outlier detection
@@ -303,8 +301,6 @@ plotfits <- function(data) {
 
 # Plot fits
 plotfits(data = fvals)
-
-hi <- fvals %>% filter(geno == "FM6(A)")
 ```
 
 # Summarize data filtering
