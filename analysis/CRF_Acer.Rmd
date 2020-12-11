@@ -18,6 +18,8 @@ library(drc)
 library(broom)
 library(tidyverse)
 library(joeyr)
+library(emmeans)
+library(ggpubr)
 ```
 
 # CBASS temperature logs
@@ -147,7 +149,93 @@ dpii <- path %>%
 # Combine with tank_id metadata
 tanks <- read_csv("data/tank_setup.csv")
 dpii <- full_join(dpii, tanks) %>%
-  select(geno, f, fm, fvfm, tank_id, tank_set, max_temp)
+  select(geno, f, fm, fvfm, tank_id, tank_set, max_temp, cooler_side)
+```
+
+# Check for positional effects
+```{r}
+Pmap <- read_csv("data/raw/20201013_CRF_Acer/P_map.csv") %>%
+  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
+  drop_na() %>%
+  unite(pos, Row, Col, sep = "", remove = FALSE)
+Smap <- read_csv("data/raw/20201013_CRF_Acer/S_map.csv") %>%
+  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
+  drop_na() %>%
+  unite(pos, Row, Col, sep = "", remove = FALSE)
+
+test <- bind_rows(Pmap, Smap) %>%
+  full_join(dpii) %>%
+  mutate(Row = factor(Row, levels = c("F", "E", "D", "C", "B", "A")))
+
+
+test %>%
+  group_by(tank_id, Col, Row) %>%
+  summarize(fvfm = mean(fvfm, na.rm = TRUE)) %>%
+  left_join(distinct(test, tank_id, Col, Row, tank_set, max_temp, cooler_side), by = c("tank_id", "Col", "Row")) %>%
+  ungroup() %>%
+  mutate(cooler = case_when(tank_id %in% c("P1", "P2") ~ "p_cooler_1",
+                            tank_id %in% c("P3", "P4") ~ "p_cooler_2",
+                            tank_id %in% c("P5", "P6") ~ "p_cooler_3",
+                            tank_id %in% c("P7", "P8") ~ "p_cooler_4",
+                            tank_id %in% c("S1", "S2") ~ "s_cooler_1",
+                            tank_id %in% c("S3", "S4") ~ "s_cooler_2",
+                            tank_id %in% c("S5", "S6") ~ "s_cooler_3",
+                            tank_id %in% c("S7", "S8") ~ "s_cooler_4")) %>%
+  filter(cooler == "s_cooler_1") %>%
+  ggplot(aes(x = Col, y = Row, color = fvfm)) + 
+  geom_point(size = 5) +
+  scale_color_gradient(low = "red", high = "blue") +
+  facet_grid(cooler~cooler_side)
+
+
+test <- test %>%
+  mutate(cols_from_ctr = case_when(
+    cooler_side == "right" ~ recode(Col, "5" = "4"),
+    cooler_side == "left" ~ recode(Col, "5" = "1", "4" = "1", "3" = "2", "2" = "3", "1" = "4"))) %>%
+  mutate(cols_from_ctr = as.numeric(cols_from_ctr)) %>%
+  mutate(rows_from_ctr = case_when(Row == "A" ~ 3, Row == "B" ~ 2, Row == "C" ~ 1, Row == "D" ~ 1,
+                                   Row == "E" ~ 2, Row == "F" ~ 3))
+  
+
+ggplot(test, aes(x = cols_from_ctr, y = fvfm, group = max_temp)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  facet_wrap(~max_temp)
+
+
+ggplot(test, aes(x = rows_from_ctr, y = fvfm, group = max_temp)) +
+  geom_jitter(width = 0.1) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  facet_wrap(~max_temp)
+
+test <- test %>%
+  mutate(max_temp = factor(max_temp))
+
+mod <- lm(fvfm ~ max_temp * cols_from_ctr * rows_from_ctr, data = test)
+summary(mod)
+anova(mod)
+visreg(mod, xvar = "rows_from_ctr", by = "max_temp")
+
+res <- emmeans(mod, specs  = c("cols_from_ctr", "rows_from_ctr"), by = "max_temp") %>% 
+  rbind() %>%
+  as_tibble() %>%
+  select(max_temp,)
+
+fitted <- augment(mod) %>%
+  inner_join(test)
+
+test2 <- left_join(fitted, res)
+test2 <- test2 %>%
+  mutate(fvfm.adj = emmean + .resid) %>%
+  select(geno, f, fm, fvfm, emmean, .resid, fvfm.adj, max_temp, tank_id, cols_from_ctr, rows_from_ctr)
+
+ggplot(test2, aes(x = rows_from_ctr, y = fvfm.adj, group = max_temp)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  facet_wrap(~max_temp)
 ```
 
 # Initial data filtering and QC
@@ -299,6 +387,14 @@ plotfits(data = fvals)
 fvals %>%
   count(problem) %>%
   mutate(freq = n / sum(n))
+```
+
+# Check for positional effects
+```{r}
+Pmap <- read_csv("data/raw/20201013_CRF_Acer/P_map.csv")
+Pmap
+Smap <- read_csv("data/raw/20201013_CRF_Acer/S_map.csv")
+Smap
 ```
 
 # Save processed data to file
