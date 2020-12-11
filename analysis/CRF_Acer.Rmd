@@ -152,105 +152,18 @@ dpii <- full_join(dpii, tanks) %>%
   select(geno, f, fm, fvfm, tank_id, tank_set, max_temp, cooler_side)
 ```
 
-# Check for positional effects
-```{r}
-Pmap <- read_csv("data/raw/20201013_CRF_Acer/P_map.csv") %>%
-  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
-  drop_na() %>%
-  unite(pos, Row, Col, sep = "", remove = FALSE)
-Smap <- read_csv("data/raw/20201013_CRF_Acer/S_map.csv") %>%
-  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
-  drop_na() %>%
-  unite(pos, Row, Col, sep = "", remove = FALSE)
-
-test <- bind_rows(Pmap, Smap) %>%
-  full_join(dpii) %>%
-  mutate(Row = factor(Row, levels = c("F", "E", "D", "C", "B", "A")))
-
-
-test %>%
-  group_by(tank_id, Col, Row) %>%
-  summarize(fvfm = mean(fvfm, na.rm = TRUE)) %>%
-  left_join(distinct(test, tank_id, Col, Row, tank_set, max_temp, cooler_side), by = c("tank_id", "Col", "Row")) %>%
-  ungroup() %>%
-  mutate(cooler = case_when(tank_id %in% c("P1", "P2") ~ "p_cooler_1",
-                            tank_id %in% c("P3", "P4") ~ "p_cooler_2",
-                            tank_id %in% c("P5", "P6") ~ "p_cooler_3",
-                            tank_id %in% c("P7", "P8") ~ "p_cooler_4",
-                            tank_id %in% c("S1", "S2") ~ "s_cooler_1",
-                            tank_id %in% c("S3", "S4") ~ "s_cooler_2",
-                            tank_id %in% c("S5", "S6") ~ "s_cooler_3",
-                            tank_id %in% c("S7", "S8") ~ "s_cooler_4")) %>%
-  filter(cooler == "s_cooler_1") %>%
-  ggplot(aes(x = Col, y = Row, color = fvfm)) + 
-  geom_point(size = 5) +
-  scale_color_gradient(low = "red", high = "blue") +
-  facet_grid(cooler~cooler_side)
-
-
-test <- test %>%
-  mutate(cols_from_ctr = case_when(
-    cooler_side == "right" ~ recode(Col, "5" = "4"),
-    cooler_side == "left" ~ recode(Col, "5" = "1", "4" = "1", "3" = "2", "2" = "3", "1" = "4"))) %>%
-  mutate(cols_from_ctr = as.numeric(cols_from_ctr)) %>%
-  mutate(rows_from_ctr = case_when(Row == "A" ~ 3, Row == "B" ~ 2, Row == "C" ~ 1, Row == "D" ~ 1,
-                                   Row == "E" ~ 2, Row == "F" ~ 3))
-  
-
-ggplot(test, aes(x = cols_from_ctr, y = fvfm, group = max_temp)) +
-  geom_jitter(alpha = 0.4, width = 0.1) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  facet_wrap(~max_temp)
-
-
-ggplot(test, aes(x = rows_from_ctr, y = fvfm, group = max_temp)) +
-  geom_jitter(width = 0.1) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  facet_wrap(~max_temp)
-
-test <- test %>%
-  mutate(max_temp = factor(max_temp))
-
-mod <- lm(fvfm ~ max_temp * cols_from_ctr * rows_from_ctr, data = test)
-summary(mod)
-anova(mod)
-visreg(mod, xvar = "rows_from_ctr", by = "max_temp")
-
-res <- emmeans(mod, specs  = c("cols_from_ctr", "rows_from_ctr"), by = "max_temp") %>% 
-  rbind() %>%
-  as_tibble() %>%
-  select(max_temp,)
-
-fitted <- augment(mod) %>%
-  inner_join(test)
-
-test2 <- left_join(fitted, res)
-test2 <- test2 %>%
-  mutate(fvfm.adj = emmean + .resid) %>%
-  select(geno, f, fm, fvfm, emmean, .resid, fvfm.adj, max_temp, tank_id, cols_from_ctr, rows_from_ctr)
-
-ggplot(test2, aes(x = rows_from_ctr, y = fvfm.adj, group = max_temp)) +
-  geom_jitter(alpha = 0.4, width = 0.1) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  facet_wrap(~max_temp)
-```
-
 # Initial data filtering and QC
 ```{r}
 df <- dpii %>%
   mutate(nursery = "crf") %>%
-  select(nursery, geno, f, fm, fvfm, max_temp)
+  select(nursery, geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side)
 
 # Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
 out <- df %>%
   filter(max_temp >= 36) %>%
-  #drop_na(fvfm) %>%
-  replace_na(replace = list(fvfm = 0, f = 0)) %>%
+  drop_na(fvfm) %>%
   mutate(mahal = tidy_mahalanobis(f, fvfm),
-         is_out = mahal > median(mahal) & f < median(f) & fvfm > median(fvfm))
+         is_out = mahal > median(mahal) & f < median(f) & fvfm > median(fvfm, na.rm = T))
 # Plot showing those outliers
 ggplot(out, aes(x = f, y = fvfm)) +
   geom_point(aes(shape = is_out, color = factor(max_temp))) +
@@ -260,20 +173,97 @@ ggplot(out, aes(x = f, y = fvfm)) +
 df <- df %>%
   # Save raw fvfm in new column
   mutate(fvfmraw = fvfm) %>%          
-  # Make missing values zero (these were all high temp / no signal)
-  replace_na(replace = list(fvfm = 0, f = 0)) %>%   
   # Merge with mahalanobis outlier info from above
   left_join(out) %>%
   # Identify problematic data points
   mutate(problem = case_when(
+    is.na(fvfm) ~ "no signal",
     fvfm > 0.750 ~ "abnormally high",
     is_out ~ "abnormally high w/ low Ft",
     TRUE ~ "none")) %>%
   mutate(fvfm = case_when(
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
-    problem == "abnormally high w/ low Ft" ~ 0,
+    problem == "abnormally high w/ low Ft" ~ NA_real_,   
     problem == "none" ~ fvfm)) %>%
-  select(nursery, geno, f, fm, fvfm, max_temp, fvfmraw, problem)
+  select(nursery, geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side, fvfmraw, problem)
+```
+
+# Adjust for positional effects
+```{r}
+# Import maps of the position of each genotype in each tank
+Pmap <- read_csv("data/raw/20201013_CRF_Acer/P_map.csv") %>%
+  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
+  drop_na() %>%
+  unite(pos, Row, Col, sep = "", remove = FALSE)
+Smap <- read_csv("data/raw/20201013_CRF_Acer/S_map.csv") %>%
+  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
+  drop_na() %>%
+  unite(pos, Row, Col, sep = "", remove = FALSE)
+
+df_pos <- bind_rows(Pmap, Smap) %>%
+  full_join(df) %>%
+  # Create new cooler_id column
+  mutate(cooler = case_when(tank_id %in% c("P1", "P2") ~ "p_cooler_1",
+                            tank_id %in% c("P3", "P4") ~ "p_cooler_2",
+                            tank_id %in% c("P5", "P6") ~ "p_cooler_3",
+                            tank_id %in% c("P7", "P8") ~ "p_cooler_4",
+                            tank_id %in% c("S1", "S2") ~ "s_cooler_1",
+                            tank_id %in% c("S3", "S4") ~ "s_cooler_2",
+                            tank_id %in% c("S5", "S6") ~ "s_cooler_3",
+                            tank_id %in% c("S7", "S8") ~ "s_cooler_4")) %>%
+  # Recode cooler column position as number of columns from center of cooler
+  mutate(cols_from_ctr = case_when(
+    cooler_side == "right" ~ recode(Col, "5" = 4, "4" = 4, "3" = 3, "2" = 2, "1" = 1),
+    cooler_side == "left" ~ recode(Col, "5" = 1, "4" = 1, "3" = 2, "2" = 3, "1" = 4))) %>%
+  # Recode cooler row position as number of rows from center of cooler
+  mutate(rows_from_ctr = case_when(Row == "A" ~ 3, Row == "B" ~ 2, Row == "C" ~ 1, 
+                                   Row == "D" ~ 1, Row == "E" ~ 2, Row == "F" ~ 3))
+  
+
+# Visualize positional effects
+ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm, group = cooler, color = tank_set)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", se = FALSE) +
+  stat_cor(aes(label = ..p.label..)) +
+  facet_wrap(~max_temp, labeller = "label_both")
+ggplot(df_pos, aes(x = rows_from_ctr, y = fvfm, group = cooler, color = tank_set)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", se = FALSE) +
+  stat_cor(aes(label = ..p.label..)) +
+  facet_wrap(~max_temp, labeller = "label_both")
+
+# Fit model to adjust for positional effects
+mod <- lm(fvfm ~ tank_id * cols_from_ctr * rows_from_ctr, data = df_pos, na.action = na.exclude)
+anova(mod)
+
+emms <- emmeans(mod, specs  = c("cols_from_ctr", "rows_from_ctr"), by = "tank_id") %>% 
+  rbind() %>%
+  as_tibble() %>%
+  select(tank_id, emmean)
+
+df_pos <- augment(mod, df_pos) %>%
+  mutate(resid = .resid) %>%
+  select(!starts_with("."))
+
+df_pos <- left_join(emms, df_pos) %>%
+  # Adjust FvFm using partial residuals to account for positional effects within each tank
+  mutate(fvfm.adj = emmean + resid) %>%
+  select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
+
+# Slopes should now all be equal to 1
+ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm.adj, group = cooler, color = tank_set)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", se = FALSE) +
+  stat_cor(aes(label = ..p.label..)) +
+  facet_wrap(~max_temp, labeller = "label_both")
+```
+
+```{r}
+# Join adjusted fvfm values with data frame
+df <- left_join(df, df_pos) %>%
+  # Select either fvfm or adjusted fvfm to use in modeling below
+  select(nursery, geno, f, fm, fvfmraw, fvfm = fvfm.adj, 
+         max_temp, problem)
 ```
 
 # Initial model fitting and outlier detection
@@ -282,13 +272,13 @@ df <- df %>%
 ll3 <- function(data) {
   drm(fvfm ~ max_temp, data = data, 
       fct = LL.3(names = c("hill", "max", "ED50")),
-      upperl = c(100, 0.75, 40),
-      lowerl = c(20, 0.50, 30))}
+      upperl = c(120, 0.72, 40),
+      lowerl = c(10, 0.55, 30))}
 tryll3 <- possibly(ll3, otherwise = NULL)
 
 # Fit model to each coral, get parameters, fitted values, and residuals
 initmods <- df %>%
-  nest(data = c(max_temp, f, fm, fvfmraw, problem, fvfm)) %>%
+  nest(data = c(max_temp, f, fm, fvfmraw, fvfm, problem)) %>%
   # Fit the model to each coral
   mutate(ll3 = map(data, tryll3)) %>%
   # Get model parameters and fitted values/residuals
@@ -359,15 +349,16 @@ fvals <- fmods %>%
 ```{r plot, fig.width = 10, fig.height = 10}
 # Define function to plot raw data, fitted values, and ed50 for each genotype
 plotfits <- function(data) {
-  ggplot(data = data, aes(x = max_temp)) +
+  ggplot(data = data, aes(x = max_temp)) + 
     geom_point(pch = 4, size = 1.25,
-               aes(y = fvfmraw, color = factor(problem, levels = c("none", "abnormally high", 
-                                              "abnormally high w/ low Ft", 
-                                              "high residual", "high cook's distance")))) +
-    geom_point(aes(y = fvfm), pch = 1, size = 2) +
-    geom_line(data = drop_na(data, .fitted),
-              aes(y = .fitted)) +
-    geom_vline(data = distinct(data, nursery, geno, ed50), 
+               aes(y = fvfmraw, color = factor(problem, levels = c("none", "no  signal",
+                                              "abnormally high",  
+                                              "abnormally high w/ low Ft",  
+                                              "high residual", "high cook's distance")))) + 
+    geom_point(aes(y = fvfm), pch = 1, size = 2) + 
+    geom_line(data = drop_na(data, .fitted), 
+              aes(y = .fitted)) + 
+    geom_vline(data = distinct(data, nursery, geno, ed50),
                aes(xintercept = ed50), 
                lwd = 0.2, lty = 2) +
     geom_text(data = distinct(data, nursery, geno, ed50),
@@ -375,7 +366,7 @@ plotfits <- function(data) {
               hjust = 1, nudge_x = -0.2, size = 3) +
     facet_wrap(~ nursery + geno, drop = TRUE) +
     scale_color_manual(name = "problem", drop = FALSE,
-                       values = c("black", "red", "orange", "blue", "turquoise"))
+                       values = c("black", "yellow", "red", "orange", "blue", "turquoise"))
 }
 
 # Plot fits
@@ -389,14 +380,6 @@ fvals %>%
   mutate(freq = n / sum(n))
 ```
 
-# Check for positional effects
-```{r}
-Pmap <- read_csv("data/raw/20201013_CRF_Acer/P_map.csv")
-Pmap
-Smap <- read_csv("data/raw/20201013_CRF_Acer/S_map.csv")
-Smap
-```
-
 # Save processed data to file
 ```{r save}
 # Write tidy data to file
@@ -404,6 +387,6 @@ fvals %>%
   select(nursery, geno, max_temp, fvfm) %>%
   drop_na() %>%
   mutate(date = "2020-10") %>%
-  write_csv("data/processed/crf_fvfm_clean.csv")
+  write_csv("data/processed/crf_fvfm_adj_clean.csv")
 ```
 
