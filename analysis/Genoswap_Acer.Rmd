@@ -35,10 +35,11 @@ df <- df %>%
 #   geom_boxplot()
 #The above  figure shows that two PAM images  from one of the 33° tanks are abnormally low -- remove these values below
 
-# Rename some variables
 df <- df %>%
+  # Remove the outlier values from bad PAM images
   filter(!(Temp == 33 & Picture %in% c(3, 22))) %>%
   select(nursery = Source, geno = Genotype, tileID, max_temp = Temp, fvfm = Y) %>%
+  # Rename some variables
   mutate(nursery = fct_recode(nursery, crf = "CRF", nsu = "Broward", um = "UM",
                               mote = "Mote", fwc = "FWC"))
 
@@ -70,8 +71,8 @@ df <- df %>%
 ll3 <- function(data) {
   drm(fvfm ~ max_temp, data = data, 
       fct = LL.3(names = c("hill", "max", "ED50")),
-      upperl = c(100, 0.75, 40),
-      lowerl = c(20, 0.50, 30))}
+      upperl = c(120, 0.72, 40),
+      lowerl = c(10, 0.55, 30))}
 tryll3 <- possibly(ll3, otherwise = NULL)
 
 # Fit model to each coral, get parameters, fitted values, and residuals
@@ -105,8 +106,8 @@ dff <- vals %>%
   left_join(counts) %>%
   group_by(nursery, geno) %>%
   mutate(resid.thresh = 2*sd(.resid, na.rm = TRUE)) %>%  # Calculate residual threshold as 3 standard deviations
-  mutate(cooksd.thresh = 4/n) %>%   # Calculate cook's distance threshold as 4/n
-  mutate(max_to_remove = floor(n * 0.15)) %>%
+  mutate(cooksd.thresh = 6/n) %>%   # Calculate cook's distance threshold as 4/n
+  mutate(max_to_remove = floor(n * 0.10)) %>%
   ungroup() %>%
   mutate(problem = case_when(.cooksd > cooksd.thresh ~ "high cook's distance",
                              abs(.resid) > resid.thresh ~ "high residual", 
