@@ -1,0 +1,174 @@
+---
+title: "HoboCalibration"
+author: "Rich"
+date: "11/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, cache = TRUE, fig.width=6, fig.asp=.618, out.width='70%', fig.align='center')
+
+library(readxl)
+library(lubridate)
+library(tidyverse)
+library(ggplot2)
+library(magrittr)
+library(stringr)
+library(RColorBrewer)
+library(kableExtra)
+```
+
+## Calibrate HOBOs from CSV
+
+Test was run from 11/4/2020 14:45 to 11/5/2020 12:30. One cooler was used with two tank replicates and 6 hobos in each. Tanks are named left and right.
+
+```{r arduino log, include=FALSE}
+
+arduinoLog <- read_delim('data/raw/hobo_calibration/LOG.TXT', delim = ',') %>%
+  filter(N_ms != 'N_ms') %>%
+  mutate(Date = ymd(Date), Time = hms(paste(Th, Tm, Ts, sep=':')), 
+         newDate = ymd_hms(paste(Date, Time))) %>%
+  select('Date' = newDate, 'setPoint' = T1SP, TempT1, TempT2, TempT3, TempT4) %>%
+  pivot_longer(3:6, names_to = 'Probe', names_prefix = 'TempT', values_to = 'Temp') %>%
+  filter(Temp > 0 & Temp < 50) %>%
+  mutate(Tank = ifelse(Probe %in% c('1', '3'), 'Right', 'Left'))
+
+arduinoLog$Temp <- as.numeric(arduinoLog$Temp)
+arduinoLog$setPoint <- as.numeric(arduinoLog$setPoint)
+arduinoLog$Type <- 'Arduino'
+
+
+ggplot(arduinoLog, aes(Date, Temp)) +
+  geom_line(aes(Date, setPoint), color='gray') +
+  geom_line(aes(color=Probe), alpha=0.2) +
+  facet_wrap(~Tank, ncol=2) +
+  scale_color_brewer(palette = 'Dark2') +
+  ylim(25, 40)
+
+arduinoLog$roundDate <- floor_date(arduinoLog$Date, 'minute') 
+
+arduinoLog
+diff(arduinoLog$setPoint)
+
+setPoint <- arduinoLog %>%
+  filter(Probe==1, !duplicated(roundDate)) %>%
+  select('Date'=roundDate, setPoint) %>%
+  filter(Date<ymd_hm('2020-11-04 16:10')|Date>=ymd_hm('2020-11-04 16:30'), #38 Ramp
+        Date<ymd_hm('2020-11-04 17:20')|Date>=ymd_hm('2020-11-04 17:30'), #37 ramp
+        Date<ymd_hm('2020-11-04 18:00')|Date>=ymd_hm('2020-11-04 18:10'), #36 ramp
+        Date<ymd_hm('2020-11-04 18:40')|Date>=ymd_hm('2020-11-04 18:50'), #35 ramp
+        Date<ymd_hm('2020-11-04 19:20')|Date>=ymd_hm('2020-11-04 19:30'), #34 ramp
+        Date<ymd_hm('2020-11-04 20:00')|Date>=ymd_hm('2020-11-04 20:10'), #33 ramp
+        Date<ymd_hm('2020-11-04 20:40')|Date>=ymd_hm('2020-11-04 20:50'), #32 ramp
+        Date<ymd_hm('2020-11-04 21:20')|Date>=ymd_hm('2020-11-04 21:30'), #31 ramp
+        Date<ymd_hm('2020-11-04 22:10')|Date>=ymd_hm('2020-11-04 22:30'), #30 ramp
+        Date<ymd_hm('2020-11-04 22:50')|Date>ymd_hm('2020-11-04 23:10'))  #27 ramp
+```
+
+```{r HOBOs, include=FALSE}
+hoboFiles <- list.files('data/raw/hobo_calibration/Hobo', pattern = '*.csv', full.names = T)
+
+allHobo <- NULL
+
+for(i in 1:length(hoboFiles)){
+  hoboData <- read_csv(hoboFiles[i], col_names = c('Date', 'Temp', 1:5)) %>%
+  select(Date, Temp)%>%
+  mutate('Name'=str_trim(str_sub(basename(hoboFiles[i]), 1, 3)), 'SN'=str_extract(Date[1], '[0-9]+'), 'shortSN'=str_sub(SN,5, 8), 'Probe'=as.factor(i+4)) %>%
+  filter(!is.na(Temp),!str_detect(Temp, '[Temp*]'))
+  allHobo <- bind_rows(allHobo, hoboData)
+}
+
+allHobo$Date <- ymd_hms(allHobo$Date)
+allHobo$Temp <- as.numeric(allHobo$Temp)
+
+#Hobos in which tank
+rightTank <- c('3463', '5040', '0765', '5041', '0768', '3462')
+leftTank <- c('0767', '4982', '5039', '0764', '3461', '0766')
+
+allHobo$Tank <- ifelse(allHobo$shortSN %in% rightTank, 'Right', 'Left')
+allHobo$Type <- 'Hobo'
+allHobo$roundDate <- floor_date(allHobo$Date, 'minute')
+
+ggplot(allHobo, aes(Date, Temp)) +
+  geom_line(aes(color=Probe)) +
+  facet_wrap(~Probe)
+```
+
+```{r}
+# Average the arduino log to 1-minute intervals
+arduinoLog <- arduinoLog %>%
+  group_by(roundDate, Tank, Probe) %>%
+  summarise(setPoint = mean(setPoint), Temp = mean(Temp)) %>%
+  ungroup()
+
+# Get just the setpoints
+setPoints <- arduinoLog %>% 
+  ungroup() %>%
+  distinct(roundDate, setPoint)
+
+# Get all the minutes when set point stayed constant, minus the first 20 minutes of reaching that set point
+stableTimes <- setPoints %>% 
+  mutate(interval = with(rle(setPoints$setPoint), { rep(seq_along(lengths), lengths) })) %>%
+  group_by(interval) %>%
+  nest(data = c(roundDate, setPoint)) %>%
+  mutate(data.f = map(data, ~ tail(., -20))) %>%
+  unnest(data.f) %>%
+  ungroup() %>%
+  select(roundDate, interval)
+
+# Filter Arduino log data to include only stableTimes
+arduinoLog.f <- arduinoLog %>%
+  select(roundDate, Tank, Probe, setPoint, Temp) %>%
+  right_join(stableTimes)
+# Filter Hobo data to include only stableTimes
+allHobo.f <- allHobo %>%
+  select(roundDate, Tank, shortSN, Temp) %>%
+  right_join(stableTimes)
+
+# Combine all data from left tank
+arduinoLog.f.left <- arduinoLog.f %>%
+  filter(Tank == "Left") %>%
+  pivot_wider(names_from = Probe, values_from = Temp, names_prefix = "Probe_")
+allHobo.f.left <- allHobo.f %>%
+  filter(Tank == "Left") %>%
+  pivot_wider(names_from = shortSN, values_from = Temp, names_prefix = "Hobo_")
+left <- full_join(arduinoLog.f.left, allHobo.f.left)
+leftmeans <- left %>% 
+  group_by(interval) %>%
+  summarise(across(starts_with(c("setPoint", "Probe", "Hobo")), mean))
+leftres <- leftmeans %>%
+  mutate(across(starts_with("Hobo"), ~ . - Probe_2)) %>%
+  filter(setPoint >= 30, setPoint <= 34)
+
+# Combine all data from right tank
+arduinoLog.f.right <- arduinoLog.f %>%
+  filter(Tank == "Right") %>%
+  pivot_wider(names_from = Probe, values_from = Temp, names_prefix = "Probe_")
+allHobo.f.right <- allHobo.f %>%
+  filter(Tank == "Right") %>%
+  pivot_wider(names_from = shortSN, values_from = Temp, names_prefix = "Hobo_")
+right <- full_join(arduinoLog.f.right, allHobo.f.right)
+rightmeans <- right %>% 
+  group_by(interval) %>%
+  summarise(across(starts_with(c("setPoint", "Probe", "Hobo")), mean))
+rightres <- rightmeans %>%
+  mutate(across(starts_with("Hobo"), ~ . - Probe_1)) %>%
+  filter(setPoint >= 30, setPoint <= 34)
+
+res <- full_join(leftres, rightres) %>%
+  select(setPoint, starts_with("Hobo")) %>% 
+  pivot_longer(starts_with("Hobo"), names_to = "hobo",  values_to = "offset")
+
+final_res <- res %>%
+  group_by(hobo) %>%
+  summarise(mean_offset = mean(offset)) %>%
+  mutate(tank_id = recode(hobo, 
+                          "Hobo_3461" = "P5", "Hobo_0765" = "P6",
+                          "Hobo_0766" = "P7", "Hobo_0764" = "P8",
+                          "Hobo_5040" = "S5", "Hobo_3463" = "S6",
+                          "Hobo_3462" = "S7", "Hobo_4982" = "S8")) %>%
+  filter(hobo != tank_id)
+  
+final_res
+write_csv(final_res, "data/processed/hobo_calibrations.csv")
+```
