@@ -113,6 +113,12 @@ hobolog <- bind_rows(inkbird_sp, hobolog)
 # Combine arduino and hobo temperature log data
 templog <- bind_rows(arduinolog, hobolog)
 
+# Import hobo offset data
+hobocal <- read_csv("data/processed/hobo_calibrations.csv")
+templog <- left_join(templog, hobocal) %>%
+  mutate(temp.adj = case_when(!is.na(hobo) ~ temp - mean_offset, TRUE ~  temp)) %>%
+  select(dttm, hm, sp, temp = temp.adj, max_temp, tank_set, tank_id)
+
 # Plot
 ggplot(templog, mapping = aes(x = dttm, y = temp, group = tank_id)) +
   geom_line(aes(color = tank_id), lwd = 0.2) +
@@ -125,7 +131,14 @@ ggplot(templog, mapping = aes(x = dttm, y = temp, group = tank_id)) +
   theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1)) +
   labs(x = "Time of day", y = "Temperature (°C)")
 
-#write_csv(templog, "data/20201010_FWC_Acer/temperature/FWC_tempdata.csv")
+#  Calculate actual hold temperatures
+actual_temps <- templog %>%
+  filter(hm > "16:15" & hm < "19:05") %>%
+  group_by(tank_id) %>%
+  summarise(max_temp = mean(temp, na.rm = TRUE)) %>%
+  arrange(max_temp)
+
+actual_temps
 ```
 
 # PAM data
@@ -147,28 +160,32 @@ dpii <- path %>%
 # Combine with tank_id metadata
 tanks <- read_csv("data/tank_setup.csv")
 dpii <- full_join(dpii, tanks) %>%
-  select(geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side)
+  select(geno, f, fm, fvfm, target_temp =  max_temp, tank_id, tank_set, cooler_side)
 
 # Filter out one genotype of Apal included in this run
 dpii <- dpii %>% 
   filter(!geno == "ApalCCN4")
+
+# Replace max_temp with actual max_temp calculated above
+dpii <- dpii %>%
+  left_join(actual_temps)
 ```
 
 # Initial data filtering and QC
 ```{r}
 df <- dpii %>%
   mutate(nursery = "fwc") %>%
-  select(nursery, geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side)
+  select(nursery, geno, f, fm, fvfm, target_temp, max_temp, tank_id, tank_set, cooler_side)
 
 # Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
 out <- df %>%
-  filter(max_temp >= 36) %>%
+  filter(target_temp >= 36) %>%
   drop_na(fvfm) %>%
   mutate(mahal = tidy_mahalanobis(f, fvfm),
          is_out = mahal > quantile(mahal, 0.75) & f < median(f) & fvfm > median(fvfm, na.rm = T))
 # Plot showing those outliers
 ggplot(out, aes(x = f, y = fvfm)) +
-  geom_point(aes(shape = is_out, color = factor(max_temp))) +
+  geom_point(aes(shape = is_out, color = factor(target_temp))) +
   scale_shape_manual(values = c(19, 25))
 
 # Filter fvfm values based on various outlier classifications
@@ -187,7 +204,7 @@ df <- df %>%
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
     problem == "abnormally high w/ low Ft" ~ NA_real_,   
     problem == "none" ~ fvfm)) %>%
-  select(nursery, geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side, fvfmraw, problem)
+  select(nursery, geno, f, fm, fvfm, target_temp, max_temp, tank_id, tank_set, cooler_side, fvfmraw, problem)
 ```
 
 # Adjust for positional effects
@@ -227,12 +244,12 @@ ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm, group = cooler, color = tank_set
   geom_jitter(alpha = 0.4, width = 0.1) +
   geom_smooth(method = "lm", se = FALSE) +
   stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~max_temp, labeller = "label_both")
+  facet_wrap(~target_temp, labeller = "label_both")
 ggplot(df_pos, aes(x = rows_from_ctr, y = fvfm, group = cooler, color = tank_set)) +
   geom_jitter(alpha = 0.4, width = 0.1) +
   geom_smooth(method = "lm", se = FALSE) +
   stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~max_temp, labeller = "label_both")
+  facet_wrap(~target_temp, labeller = "label_both")
 
 # Fit model to adjust for positional effects
 mod <- lm(fvfm ~ tank_id * cols_from_ctr * rows_from_ctr, data = df_pos, na.action = na.exclude)
@@ -250,14 +267,14 @@ df_pos <- augment(mod, df_pos) %>%
 df_pos <- left_join(emms, df_pos) %>%
   # Adjust FvFm using partial residuals to account for positional effects within each tank
   mutate(fvfm.adj = emmean + resid) %>%
-  select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
+  select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, target_temp, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
 
 # Slopes should now all be equal to 1
 ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm.adj, group = cooler, color = tank_set)) +
   geom_jitter(alpha = 0.4, width = 0.1) +
   geom_smooth(method = "lm", se = FALSE) +
   stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~max_temp, labeller = "label_both")
+  facet_wrap(~target_temp, labeller = "label_both")
 ```
 
 ```{r}
