@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, cache = TRUE, fig.width=6, fig.asp=.618, out.width='70%', fig.align='center')
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, cache = FALSE, fig.width=6, fig.asp=.618, out.width='70%', fig.align='center')
 
 library(readxl)
 library(lubridate)
