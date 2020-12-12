@@ -113,6 +113,12 @@ hobolog <- bind_rows(inkbird_sp, hobolog)
 # Combine arduino and hobo temperature log data
 templog <- bind_rows(arduinolog, hobolog)
 
+# Import hobo offset data
+hobocal <- read_csv("data/processed/hobo_calibrations.csv")
+templog <- left_join(templog, hobocal) %>%
+  mutate(temp.adj = case_when(!is.na(hobo) ~ temp - mean_offset, TRUE ~  temp)) %>%
+  select(dttm, hm, sp, temp = temp.adj, max_temp, tank_set, tank_id)
+
 # Plot
 ggplot(templog, mapping = aes(x = dttm, y = temp, group = tank_id)) +
   geom_line(aes(color = tank_id), lwd = 0.2) +
@@ -126,6 +132,13 @@ ggplot(templog, mapping = aes(x = dttm, y = temp, group = tank_id)) +
   labs(x = "Time of day", y = "Temperature (°C)")
 
 #write_csv(templog, "data/20201014_UM_Acer/temperature/UM_tempdata.csv")
+
+#  Calculate actual hold temperatures
+actual_temps <- templog %>%
+  filter(hm > "16:15" & hm < "19:05") %>%
+  group_by(tank_id) %>%
+  summarise(max_temp = mean(temp, na.rm = TRUE)) %>%
+  arrange(max_temp)
 ```
 
 # Results: PAM data
@@ -149,27 +162,31 @@ dpii <- path %>%
 # Combine with tank_id metadata
 tanks <- read_csv("data/tank_setup.csv")
 dpii <- full_join(dpii, tanks) %>%
-  select(geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side)
+  select(geno, f, fm, fvfm, target_temp = max_temp, tank_id, tank_set, cooler_side)
 
 # Fix error in data -- genotype "8yy" should be "88y"
 dpii$geno[dpii$geno == "8yy"] <- "88y"
+
+# Replace max_temp with actual max_temp calculated above
+dpii <- dpii %>%
+  left_join(actual_temps)
 ```
 
 # Initial data filtering and QC
 ```{r}
 df <- dpii %>%
   mutate(nursery = "um") %>%
-  select(nursery, geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side)
+  select(nursery, geno, f, fm, fvfm, target_temp, max_temp, tank_id, tank_set, cooler_side)
 
 # Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
 out <- df %>%
-  filter(max_temp >= 36) %>%
+  filter(target_temp >= 36) %>%
   drop_na(fvfm) %>%
   mutate(mahal = tidy_mahalanobis(f, fvfm),
          is_out = mahal > median(mahal) & f < median(f) & fvfm > median(fvfm, na.rm = T))
 # Plot showing those outliers
 ggplot(out, aes(x = f, y = fvfm)) +
-  geom_point(aes(shape = is_out, color = factor(max_temp))) +
+  geom_point(aes(shape = is_out, color = factor(target_temp))) +
   scale_shape_manual(values = c(19, 25))
 
 # Filter fvfm values based on various outlier classifications
@@ -188,7 +205,7 @@ df <- df %>%
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
     problem == "abnormally high w/ low Ft" ~ NA_real_,   
     problem == "none" ~ fvfm)) %>%
-  select(nursery, geno, f, fm, fvfm, max_temp, tank_id, tank_set, cooler_side, fvfmraw, problem)
+  select(nursery, geno, f, fm, fvfm, max_temp, target_temp, tank_id, tank_set, cooler_side, fvfmraw, problem)
 ```
 
 # Adjust for positional effects
@@ -202,6 +219,7 @@ Smap <- read_csv("data/raw/20201014_UM_Acer/S_map.csv") %>%
   pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
   drop_na() %>%
   unite(pos, Row, Col, sep = "", remove = FALSE)
+
 
 df_pos <- bind_rows(Pmap, Smap) %>%
   full_join(df) %>%
@@ -222,18 +240,18 @@ df_pos <- bind_rows(Pmap, Smap) %>%
   mutate(rows_from_ctr = case_when(Row == "A" ~ 3, Row == "B" ~ 2, Row == "C" ~ 1, 
                                    Row == "D" ~ 1, Row == "E" ~ 2, Row == "F" ~ 3))
   
-
+df_pos %>% filter(tank_set == "starboard", target_temp == 38, cols_from_ctr == 1)
 # Visualize positional effects
 ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm, group = cooler, color = tank_set)) +
   geom_jitter(alpha = 0.4, width = 0.1) +
   geom_smooth(method = "lm", se = FALSE) +
   stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~max_temp, labeller = "label_both")
+  facet_wrap(~target_temp, labeller = "label_both")
 ggplot(df_pos, aes(x = rows_from_ctr, y = fvfm, group = cooler, color = tank_set)) +
   geom_jitter(alpha = 0.4, width = 0.1) +
   geom_smooth(method = "lm", se = FALSE) +
   stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~max_temp, labeller = "label_both")
+  facet_wrap(~target_temp, labeller = "label_both")
 
 # Fit model to adjust for positional effects
 mod <- lm(fvfm ~ tank_id * cols_from_ctr * rows_from_ctr, data = df_pos, na.action = na.exclude)
@@ -251,14 +269,14 @@ df_pos <- augment(mod, df_pos) %>%
 df_pos <- left_join(emms, df_pos) %>%
   # Adjust FvFm using partial residuals to account for positional effects within each tank
   mutate(fvfm.adj = emmean + resid) %>%
-  select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
+  select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, target_temp, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
 
 # Slopes should now all be equal to 1
 ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm.adj, group = cooler, color = tank_set)) +
   geom_jitter(alpha = 0.4, width = 0.1) +
   geom_smooth(method = "lm", se = FALSE) +
   stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~max_temp, labeller = "label_both")
+  facet_wrap(~target_temp, labeller = "label_both")
 ```
 
 ```{r}
@@ -266,7 +284,7 @@ ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm.adj, group = cooler, color = tank
 df <- left_join(df, df_pos) %>%
   # Select either fvfm or adjusted fvfm to use in modeling below
   select(nursery, geno, f, fm, fvfmraw, fvfm = fvfm.adj, 
-         max_temp, problem)
+         target_temp, max_temp, problem)
 ```
 
 # Initial model fitting and outlier detection
@@ -281,7 +299,7 @@ tryll3 <- possibly(ll3, otherwise = NULL)
 
 # Fit model to each coral, get parameters, fitted values, and residuals
 initmods <- df %>%
-  nest(data = c(max_temp, f, fm, fvfmraw, fvfm, problem)) %>%
+  nest(data = c(target_temp, max_temp, f, fm, fvfmraw, fvfm, problem)) %>%
   # Fit the model to each coral
   mutate(ll3 = map(data, tryll3)) %>%
   # Get model parameters and fitted values/residuals
@@ -326,8 +344,8 @@ dff <- vals %>%
 
 # Refit models without problematic points
 fmods <- dff %>%
-  select(nursery, geno, max_temp, f, fm, fvfmraw, problem, fvfm) %>%
-  nest(data = c(max_temp, f, fm, fvfmraw, fvfm, problem)) %>%
+  select(nursery, geno, target_temp, max_temp, f, fm, fvfmraw, problem, fvfm) %>%
+  nest(data = c(target_temp, max_temp, f, fm, fvfmraw, fvfm, problem)) %>%
   # Fit the model to each coral
   mutate(ll3 = map(data, tryll3)) %>%
   # Get model parameters and fitted values/residuals
@@ -345,7 +363,7 @@ fvals <- fmods %>%
   select(nursery, geno, pred) %>%
   unnest(pred) %>%
   full_join(fed50) %>%
-  full_join(select(dff, nursery, geno, max_temp, f, fm, fvfmraw, problem, fvfm)) %>%
+  full_join(select(dff, nursery, geno, target_temp, max_temp, f, fm, fvfmraw, problem, fvfm)) %>%
   rename(ed50 = estimate)
 ```
 
