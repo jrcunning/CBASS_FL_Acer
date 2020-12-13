@@ -18,6 +18,9 @@ library(ggthemes)
 library(drc)
 library(broom)
 library(tidyverse)
+library(emmeans)
+library(ggpubr)
+library(joeyr)
 ```
 
 # CBASS temperature logs
@@ -99,50 +102,111 @@ df <- read_csv("data/raw/20200820_KJSNSU_Acer/PAM/KJS_pamdata_tidy.csv")
 df <- df %>%
   mutate(nursery = "nsu",
          geno = paste0("kjs", Genotype)) %>%
-  select(nursery, geno, f, fm, fvfm, max_temp = Final_Temp) %>%
+  select(nursery, geno, f, fm, fvfm, max_temp = Final_Temp, tank_id = Tank) %>%
   drop_na(fvfm)
 
-# df %>%
-#   filter(max_temp <= 33) %>%
-#   summarise(across(fvfm, list(mean, sd), na.rm= T))
-# 
-# 0.641 +  (2*0.0529)
-# 
-# df %>%
-#   filter(max_temp >= 36) %>%
-#   summarise(across(f, list(mean, sd), na.rm= T))
-# 177 - (2*74.4)
-
-# df %>%
-#    filter(max_temp >= 36) %>%
-#    mutate(mahal_dist = tidy_mahalanobis(f, fm, fvfmraw)) %>%
-#    ggplot(aes(x = f,  y = fvfmraw)) + geom_point(aes(color = mahal_dist > 5))
-# 
-# devtools::install_github("JoeyStanley/joeyr")
-# library(joeyr)
-# 
-# df <- df %>%
-#   filter(max_temp >=)
-#   mutate(mahal_dist = tidy_mahalanobis(max_temp, f, fm, fvfmraw))
-# 
-# ggplot(df, aes(x = max_temp, y = fvfmraw)) +
-#   geom_point(aes(color = mahal_dist > 18)) +
-#   facet_wrap(~geno)
+# Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
+out <- df %>%
+  filter(max_temp >= 36) %>%
+  drop_na(fvfm) %>%
+  mutate(mahal = tidy_mahalanobis(f, fvfm),
+         is_out = mahal > quantile(mahal, 0.75) & f < median(f) & fvfm > median(fvfm, na.rm = T))
+# Plot showing those outliers
+ggplot(out, aes(x = f, y = fvfm)) +
+  geom_point(aes(shape = is_out, color = factor(max_temp))) +
+  scale_shape_manual(values = c(19, 25))
 
 df <- df %>%
   # Save raw fvfm data in new column
-  mutate(fvfmraw = fvfm) %>%          
+  mutate(fvfmraw = fvfm) %>% 
+  # Merge with mahalanobis outlier info from above
+  left_join(out) %>%
   # Identify problematic data points
   mutate(problem = case_when(
-    fvfm > 0.746 ~ "abnormally high",
-    max_temp >= 36 & fvfm >= 0.3 & f <= 120 ~ "abnormally high w/ low Ft",
+    fvfm > 0.75 ~ "abnormally high",
+    is_out ~ "abnormally high w/ low Ft",
     TRUE ~ "none")) %>%
   mutate(fvfm = case_when(
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
-    problem == "abnormally high w/ low Ft" ~ 0,
+    problem == "abnormally high w/ low Ft" ~ NA_real_,
     problem == "none" ~ fvfm))
 
 df %>% count(problem)
+```
+
+# Adjust for positional effects
+```{r}
+# Import maps of the position of each genotype in each tank
+map1 <- read_csv("data/raw/20200820_KJSNSU_Acer/20200820_map.csv") %>%
+  mutate(across(.fns = as.character)) %>%
+  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
+  drop_na() %>%
+  unite(pos, Row, Col, sep = "", remove = FALSE)
+map2 <- read_csv("data/raw/20200820_KJSNSU_Acer/20200821_map.csv") %>%
+  pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
+  mutate(across(.fns = as.character)) %>%
+  drop_na() %>%
+  unite(pos, Row, Col, sep = "", remove = FALSE)
+
+df_pos <- bind_rows(map1, map2) %>%
+  mutate(geno = paste0("kjs", geno)) %>%
+  full_join(df) %>%
+  # Create new cooler_side column
+  mutate(cooler_side = case_when(tank_id %in% c("B2T2", "B2T4", "B1T2", "B1T4") ~ "left",
+                                 tank_id %in% c("B2T1", "B2T3", "B1T1", "B1T3") ~ "right")) %>%
+  # Recode cooler column position as number of columns from center of cooler
+  mutate(cols_from_ctr = case_when(
+    cooler_side == "right" ~ recode(Col, "4" = 4, "3" = 3, "2" = 2, "1" = 1),
+    cooler_side == "left" ~ recode(Col, "4" = 1, "3" = 2, "2" = 3, "1" = 4))) %>%
+  # Recode cooler row position as number of rows from center of cooler
+  mutate(rows_from_ctr = case_when(Row == "A" ~ 3, Row == "B" ~ 2, Row == "C" ~ 1, 
+                                   Row == "D" ~ 1, Row == "E" ~ 2, Row == "F" ~ 3))
+  
+
+# Visualize positional effects
+ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm, group = tank_id)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", se = FALSE) +
+  stat_cor(aes(label = ..p.label..)) +
+  facet_wrap(~max_temp, labeller = "label_both")
+ggplot(df_pos, aes(x = rows_from_ctr, y = fvfm, group = tank_id)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", se = FALSE) +
+  stat_cor(aes(label = ..p.label..)) +
+  facet_wrap(~max_temp, labeller = "label_both")
+
+# Fit model to adjust for positional effects
+mod <- lm(fvfm ~ tank_id * cols_from_ctr * rows_from_ctr, data = df_pos, na.action = na.exclude)
+anova(mod)
+
+emms <- emmeans(mod, specs  = c("cols_from_ctr", "rows_from_ctr"), by = "tank_id") %>% 
+  rbind() %>%
+  as_tibble() %>%
+  select(tank_id, emmean)
+
+df_pos <- augment(mod, df_pos) %>%
+  mutate(resid = .resid) %>%
+  select(!starts_with("."))
+
+df_pos <- left_join(emms, df_pos) %>%
+  # Adjust FvFm using partial residuals to account for positional effects within each tank
+  mutate(fvfm.adj = emmean + resid) %>%
+  select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, max_temp, tank_id, cols_from_ctr, rows_from_ctr)
+
+# Slopes should now all be equal to 1
+ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm.adj, group = tank_id)) +
+  geom_jitter(alpha = 0.4, width = 0.1) +
+  geom_smooth(method = "lm", se = FALSE) +
+  stat_cor(aes(label = ..p.label..)) +
+  facet_wrap(~max_temp, labeller = "label_both")
+```
+
+```{r}
+# Join adjusted fvfm values with data frame
+df <- left_join(df, df_pos) %>%
+  # Select either fvfm or adjusted fvfm to use in modeling below
+  select(nursery, geno, f, fm, fvfmraw, fvfm = fvfm.adj, 
+         max_temp, problem)
 ```
 
 # Initial model fitting and outlier detection
@@ -151,8 +215,8 @@ df %>% count(problem)
 ll3 <- function(data) {
   drm(fvfm ~ max_temp, data = data, 
       fct = LL.3(names = c("hill", "max", "ED50")),
-      upperl = c(100, 0.75, 40),
-      lowerl = c(20, 0.50, 30))}
+      upperl = c(120, 0.75, 40),
+      lowerl = c(10, 0.50, 30))}
 tryll3 <- possibly(ll3, otherwise = NULL)
 
 # Fit model to each coral, get parameters, fitted values, and residuals
@@ -264,6 +328,13 @@ plotfits <- function(data) {
 plotfits(data = fvals)
 ```
 
+# Summarize data filtering
+```{r}
+fvals %>%
+  count(problem) %>%
+  mutate(freq = n / sum(n))
+```
+
 # Save processed data to file
 ```{r save}
 # Write tidy data to file
@@ -271,6 +342,6 @@ fvals %>%
   select(nursery, geno, max_temp, fvfm) %>%
   drop_na() %>%
   mutate(date = "2020-08") %>%
-  write_csv("data/processed/KJS_fvfm_clean.csv")
+  write_csv("data/processed/KJS_fvfm_adj_clean.csv")
 ```
 
