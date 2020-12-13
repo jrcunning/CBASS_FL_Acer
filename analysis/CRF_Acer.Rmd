@@ -8,7 +8,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
-```{r}
+```{r, echo = FALSE}
 library(janitor)
 library(lubridate)
 library(scales)
@@ -139,13 +139,35 @@ actual_temps <- templog %>%
   summarise(max_temp = mean(temp, na.rm = TRUE)) %>%
   arrange(max_temp)
 
-actual_temps
+# Combine with tank metadata
+tanks <- read_csv("data/tank_setup.csv")
+actual_temps %>%
+  full_join(tanks, by = "tank_id") %>%
+  select(target_temp = max_temp.y, max_temp = max_temp.x, tank_set) %>%
+  pivot_wider(names_from = target_temp, values_from = max_temp) %>%
+  knitr::kable(digits = 2)
 ```
 
 # PAM data
 
-#### Import data from DIVING PAM II
+## Turn each filtering and adjustment step on or off
+```{r, echo = TRUE}
+# Initial pre-filtering (abnormally high, abnormally high w/ low Ft)
+pre.filter <- TRUE
+
+# Post-model-fit filtering (high cook's distance outliers)
+mod.filter <- TRUE
+
+# Adjust for positional effects
+pos.adjust <- TRUE
+
+# Use actual max temperatures instead of target temperatures
+temp.adjust <- TRUE
+```
+
+
 ```{r}
+#### Import data from DIVING PAM II
 # Read manually entered data from Diving PAM II
 path <- "data/raw/20201013_CRF_Acer/PAM/20201013dii_Acer.xlsx"
 dpii <- path %>%
@@ -160,7 +182,6 @@ dpii <- path %>%
          geno = str_replace(geno, " ", ""))
 
 # Combine with tank_id metadata
-tanks <- read_csv("data/tank_setup.csv")
 dpii <- full_join(dpii, tanks) %>%
   select(geno, f, fm, fvfm, tank_id, tank_set, target_temp = max_temp, cooler_side)
 
@@ -169,14 +190,14 @@ dpii <- dpii %>%
   left_join(actual_temps)
 ```
 
-# Initial data filtering and QC
-```{r}
-df <- dpii %>%
+# Data pre-filtering and QC
+```{r, fig.width = 5, fig.height = 3.5}
+dpii <- dpii %>%
   mutate(nursery = "crf") %>%
   select(nursery, geno, f, fm, fvfm, target_temp, max_temp, tank_id, tank_set, cooler_side)
 
 # Identify points at high temperatures where low background fluorescence (f) resulted in abnormally high values of fvfm
-out <- df %>%
+out <- dpii %>%
   filter(target_temp >= 36) %>%
   drop_na(fvfm) %>%
   mutate(mahal = tidy_mahalanobis(f, fvfm),
@@ -187,7 +208,7 @@ ggplot(out, aes(x = f, y = fvfm)) +
   scale_shape_manual(values = c(19, 25))
 
 # Filter fvfm values based on various outlier classifications
-df <- df %>%
+df <- dpii %>%
   # Save raw fvfm in new column
   mutate(fvfmraw = fvfm) %>%          
   # Merge with mahalanobis outlier info from above
@@ -201,12 +222,23 @@ df <- df %>%
   mutate(fvfm = case_when(
     problem == "abnormally high" ~ NA_real_,    # Change abnormally high values to NA
     problem == "abnormally high w/ low Ft" ~ NA_real_,   
-    problem == "none" ~ fvfm)) %>%
-  select(nursery, geno, f, fm, fvfm, target_temp, max_temp, tank_id, tank_set, cooler_side, fvfmraw, problem)
+    problem == "none" ~ fvfm))# %>%
+  #select(nursery, geno, f, fm, fvfm, target_temp, max_temp, tank_id, tank_set, cooler_side, fvfmraw, problem)
+
+# Select pre-filtered or raw data to use moving forward based on set option
+df <- if (pre.filter) { 
+  df 
+} else { 
+  dpii %>% 
+    mutate(fvfmraw = fvfm, 
+           problem = case_when(is.na(fvfm) ~ "no signal",
+                               TRUE ~ "none") )
+}
+
 ```
 
-# Adjust for positional effects
-```{r}
+# Positional effects
+```{r, fig.width = 10}
 # Import maps of the position of each genotype in each tank
 Pmap <- read_csv("data/raw/20201013_CRF_Acer/P_map.csv") %>%
   pivot_longer(-Row, values_to = "geno", names_to = "Col") %>%
@@ -238,23 +270,25 @@ df_pos <- bind_rows(Pmap, Smap) %>%
   
 
 # Visualize positional effects
-ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm, group = cooler, color = tank_set)) +
+pos.effects <- function(x, xlab) {
+  ggplot(df_pos, aes(x = get(x), y = fvfm, group = cooler, color = tank_set)) +
   geom_jitter(alpha = 0.4, width = 0.1) +
   geom_smooth(method = "lm", se = FALSE) +
   stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~target_temp, labeller = "label_both")
-ggplot(df_pos, aes(x = rows_from_ctr, y = fvfm, group = cooler, color = tank_set)) +
-  geom_jitter(alpha = 0.4, width = 0.1) +
-  geom_smooth(method = "lm", se = FALSE) +
-  stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~target_temp, labeller = "label_both")
+  facet_wrap(~target_temp, labeller = "label_both") +
+  labs(x = xlab) +
+  theme(legend.position = "bottom")
+}
+col.effects <- pos.effects("cols_from_ctr", xlab = "Columns from center")
+row.effects <- pos.effects("rows_from_ctr", xlab = "Rows from center")
+
+cowplot::plot_grid(col.effects, row.effects)
 
 # Fit model to adjust for positional effects
 mod <- lm(fvfm ~ tank_id * cols_from_ctr * rows_from_ctr, data = df_pos, na.action = na.exclude)
-anova(mod)
+anova(mod) %>% tidy() %>% knitr::kable()
 
-emms <- emmeans(mod, specs  = c("cols_from_ctr", "rows_from_ctr"), by = "tank_id") %>% 
-  rbind() %>%
+emms <- emmeans(mod, specs  = c("tank_id", "cols_from_ctr", "rows_from_ctr")) %>% 
   as_tibble() %>%
   select(tank_id, emmean)
 
@@ -267,24 +301,28 @@ df_pos <- left_join(emms, df_pos) %>%
   mutate(fvfm.adj = emmean + resid) %>%
   select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, target_temp, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
 
-# Slopes should now all be equal to 1
-ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm.adj, group = cooler, color = tank_set)) +
-  geom_jitter(alpha = 0.4, width = 0.1) +
-  geom_smooth(method = "lm", se = FALSE) +
-  stat_cor(aes(label = ..p.label..)) +
-  facet_wrap(~target_temp, labeller = "label_both")
+
+# Select whether to use adjusted or unadjusted fvfm data downstream
+df <- if (pos.adjust) {
+  # If position adjustment turned on, join with adjusted fvfm values
+  left_join(df, df_pos) %>%
+    # Select adjusted fvfm to use in modeling below
+    select(nursery, geno, f, fm, fvfmraw, fvfm = fvfm.adj, target_temp, max_temp, problem)
+} else { 
+  # If position adjustment turned off, stick with original data
+  df %>% select(nursery, geno, f, fm, fvfmraw, fvfm, target_temp, max_temp, problem)
+}
 ```
 
-```{r}
-# Join adjusted fvfm values with data frame
-df <- left_join(df, df_pos) %>%
-  # Select either fvfm or adjusted fvfm to use in modeling below
-  select(nursery, geno, f, fm, fvfmraw, fvfm = fvfm.adj, 
-         max_temp, problem)
-```
-
-# Initial model fitting and outlier detection
+# Dose-response curve model fitting
 ```{r model, results = 'hide'}
+# Select whether to use target temp or actual recorded max temp for model fitting
+df <- if (temp.adjust) {
+  df %>% select(-target_temp)
+} else {
+  df %>% mutate(max_temp = target_temp) %>% select(-target_temp)
+}
+
 # Define function to fit 3-parameter LL model to data and return NULL if fitting error
 ll3 <- function(data) {
   drm(fvfm ~ max_temp, data = data, 
@@ -363,7 +401,7 @@ fvals <- fmods %>%
   rename(ed50 = estimate)
 ```
 
-```{r plot, fig.width = 10, fig.height = 10}
+```{r plot, fig.width = 10, fig.height = 10, echo = FALSE}
 # Define function to plot raw data, fitted values, and ed50 for each genotype
 plotfits <- function(data) {
   ggplot(data = data, aes(x = max_temp)) + 
@@ -385,22 +423,40 @@ plotfits <- function(data) {
     scale_color_manual(name = "problem", drop = FALSE,
                        values = c("black", "yellow", "red", "orange", "blue", "turquoise"))
 }
+```
 
 # Plot fits
-plotfits(data = fvals)
+```{r, fig.width = 10, fig.height = 10}
+# Select whether to use model-based filtering or not
+final <- if (mod.filter) { fvals } else { vals }
+
+# Plot fits
+plotfits(data = final)
 ```
 
 # Summarize data filtering
 ```{r}
-fvals %>%
+final %>%
   count(problem) %>%
-  mutate(freq = n / sum(n))
+  mutate(freq = n / sum(n)) %>%
+  knitr::kable()
+
+# Calculate pseudo R2 across dataset of the fitted models with given filtering options
+finalmods <- if (mod.filter) { fmods } else { initmods }
+calc.ss <- finalmods %>%
+  mutate(aov = map(data, ~ aov(fvfm ~ factor(max_temp), data = .)),
+         tss = map_dbl(aov, ~ sum(tidy(.)$sumsq)),
+         drc.rss = map_dbl(ll3, ~ tidy(modelFit(.))$rss[2]),
+         pseudo.R2 = 1 - (drc.rss / tss))
+
+tibble(pseudo_R2 = 1 - (sum(calc.ss$drc.rss) / sum(calc.ss$tss))) %>%
+  knitr::kable()
 ```
 
 # Save processed data to file
 ```{r save}
 # Write tidy data to file
-fvals %>%
+final %>%
   select(nursery, geno, max_temp, fvfm) %>%
   drop_na() %>%
   mutate(date = "2020-10") %>%
