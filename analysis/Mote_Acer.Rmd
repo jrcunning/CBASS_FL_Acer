@@ -259,89 +259,31 @@ df_pos <- bind_rows(Pmap, Smap) %>%
   # Recode cooler row position as number of rows from center of cooler
   mutate(rows_from_ctr = case_when(Row == "A" ~ 3, Row == "B" ~ 2, Row == "C" ~ 1, 
                                    Row == "D" ~ 1, Row == "E" ~ 2, Row == "F" ~ 3))
-  
 
-# # Visualize positional effects
-# pos.effects <- function(x, xlab) {
-#   ggplot(df_pos, aes(x = get(x), y = fvfm, group = cooler, color = tank_set)) +
-#   geom_jitter(alpha = 0.4, width = 0.1) +
-#   geom_smooth(method = "lm", se = FALSE) +
-#   stat_cor(aes(label = ..p.label..)) +
-#   facet_wrap(~target_temp, labeller = "label_both") +
-#   labs(x = xlab) +
-#   theme(legend.position = "bottom")
-# }
-# col.effects <- pos.effects("cols_from_ctr", xlab = "Columns from center")
-# row.effects <- pos.effects("rows_from_ctr", xlab = "Rows from center")
-# 
-# cowplot::plot_grid(col.effects, row.effects)
+# Visualize positional effects within each tank
+ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm, group = rows_from_ctr, 
+                   color = factor(rows_from_ctr), shape = factor(rows_from_ctr))) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_grid(tank_set~target_temp)
 
 # Fit model to adjust for positional effects
 mod <- lm(fvfm ~ tank_id * cols_from_ctr * rows_from_ctr, data = df_pos, na.action = na.exclude)
 anova(mod) %>% tidy() %>% knitr::kable()
 
-res <- df_pos %>%
-  select(tank_id, geno, cols_from_ctr, rows_from_ctr, fvfm) %>%
-  # Nest data for each tank individually
-  nest(data = c(geno, cols_from_ctr, rows_from_ctr, fvfm)) %>%
-  mutate(dataf = map(data, ~ drop_na(.)),
-         # Fit a linear model testing crossed effects of rows from center and columns from center
-         mod = map(dataf, ~ lm(fvfm ~ rows_from_ctr * cols_from_ctr, data = .x)),
-         # Perform model selection to determine if any of these predictors are significant
-         mod2 = map2(dataf, mod, ~ step(.y, method = "backwards")),
-         # Calculate estimated marginal means across only significant predictors
-         emm = map(mod2, ~ emmeans(., specs = as.formula(str_extract(formula(.), "~.*")))),
-         emmean = map_dbl(emm, ~ pull(as_data_frame(.), emmean)),
-         # Get residuals from model including only significant predictors
-         out = map2(mod2, dataf, ~ augment(.x, .y)))
+# Calculate estimated marginal means for the "center" of each tank
+emms <- emmeans(mod, specs  = c("tank_id", "cols_from_ctr", "rows_from_ctr")) %>%
+  as_tibble() %>%
+  select(tank_id, emmean)
 
-sigterms <- res %>%
-  mutate(sigterms = map(mod2, ~ labels(terms(formula(.))))) %>%
-  unnest(c(tank_id, sigterms)) %>%
-  select(tank_id, sigterms) %>%
-  mutate(sigterms = recode(sigterms, "rows_from_ctr" = "row", "cols_from_ctr" = "col",
-                           "rows_from_ctr:cols_from_ctr" = "row:col")) %>%
-  group_by(tank_id) %>%
-  summarize(sigterms = paste0(sigterms, collapse = ",")) %>%
-  mutate(sigterms = recode(sigterms, "row,col,row:col" = "row:col")) %>%
-  left_join(tanks) %>%
-  rename(target_temp = max_temp)
+# Adjust FvFm using partial residuals to account for positional effects within each tank
+df_pos <- augment(mod, df_pos) %>%
+  mutate(resid = .resid) %>%
+  select(!starts_with("."))
 
-ggplot(df_pos, aes(x = cols_from_ctr, y = fvfm, group = rows_from_ctr, 
-                   color = factor(rows_from_ctr), shape = factor(rows_from_ctr))) +
-  geom_point(alpha = 0.7) +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_grid(tank_set~target_temp) +
-  geom_text(data = sigterms, aes(x = 2, y = 0.75, label = sigterms), inherit.aes = FALSE)
-
-# ggplot(df_pos, aes(x = Col, y = fvfm, group = Row, 
-#                    color = factor(Row), shape = factor(Row))) +
-#   geom_point(alpha = 0.7) +
-#   geom_smooth(se = FALSE) +
-#   facet_grid(tank_set~target_temp)
-
-
-# Calculate adjusted fvfm as estimated marginal mean plus residual, only with significant predictors
-df_pos <- res %>% 
-  select(tank_id, emmean, out) %>%
-  unnest(c(emmean, out)) %>%
-  mutate(fvfm.adj = emmean + .resid) %>%
-  select(geno, fvfm, fvfm.adj, tank_id, cols_from_ctr, rows_from_ctr)
-
-#####
-# emms <- emmeans(mod, specs  = c("tank_id", "cols_from_ctr", "rows_from_ctr")) %>%
-#   as_tibble() %>%
-#   select(tank_id, emmean)
-# 
-# df_pos <- augment(mod, df_pos) %>%
-#   mutate(resid = .resid) %>%
-#   select(!starts_with("."))
-# 
-# df_pos <- left_join(emms, df_pos) %>%
-#   # Adjust FvFm using partial residuals to account for positional effects within each tank
-#   mutate(fvfm.adj = emmean + resid) %>%
-#   select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, target_temp, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
-#####
+df_pos <- left_join(emms, df_pos) %>%
+  mutate(fvfm.adj = emmean + resid) %>%
+  select(geno, f, fm, fvfm, emmean, resid, fvfm.adj, target_temp, max_temp, tank_id, tank_set, cooler, cols_from_ctr, rows_from_ctr)
 
 # Select whether to use adjusted or unadjusted fvfm data downstream
 df <- if (pos.adjust) {
