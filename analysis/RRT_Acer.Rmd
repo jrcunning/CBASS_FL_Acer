@@ -175,6 +175,11 @@ tanks <- read_csv("data/tank_setup.csv")
 dpii <- full_join(dpii, tanks) %>%
   select(geno, f, fm, fvfm, target_temp = max_temp, tank_id, tank_set, cooler_side)
 
+# Add 'RR' to end of 'AcerXXX' genotype names since these are distinct from CRF genotypes with same names
+dpii <- dpii %>%
+  mutate(geno = case_when(str_detect(geno, "Acer") ~ paste0(geno, "RR"),
+                          TRUE ~ geno))
+
 # Replace max_temp with actual max_temp calculated above
 dpii <- dpii %>%
   left_join(actual_temps)
