@@ -733,7 +733,7 @@ dff &lt;- vals %&gt;%
                              TRUE ~ problem)) %&gt;%
   group_by(nursery, geno, outlier = problem %in% c(&quot;high cook&#39;s distance&quot;, &quot;high residual&quot;)) %&gt;%
   mutate(n.outliers = n(),
-         rank.out = order(.cooksd)) %&gt;%
+         rank.out = order(.cooksd, decreasing = TRUE)) %&gt;%
   ungroup() %&gt;%
   mutate(fvfm = case_when(outlier &amp; rank.out &lt;= max_to_remove ~ NA_real_, 
                           TRUE ~ fvfm)) 

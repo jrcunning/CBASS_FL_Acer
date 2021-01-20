@@ -358,7 +358,7 @@ dff <- vals %>%
                              TRUE ~ problem)) %>%
   group_by(nursery, geno, outlier = problem %in% c("high cook's distance", "high residual")) %>%
   mutate(n.outliers = n(),
-         rank.out = order(.cooksd)) %>%
+         rank.out = order(.cooksd, decreasing = TRUE)) %>%
   ungroup() %>%
   mutate(fvfm = case_when(outlier & rank.out <= max_to_remove ~ NA_real_, 
                           TRUE ~ fvfm)) 
