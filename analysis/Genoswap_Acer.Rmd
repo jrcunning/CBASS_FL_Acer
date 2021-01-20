@@ -7,7 +7,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 library(drc)
-library(furrr)
 library(broom)
 library(tidyverse)
 ```
@@ -18,10 +17,12 @@ Thermal tolerance is assessed for each genotype by analyzing the decrease in Fv/
 
 ```{r import}
 #### Import data
-df <- read_csv("data/raw/20200628_Genoswap_Acer/CBASS_Master_data_clean.csv") %>%
+df <- #read_csv("data/raw/20200628_Genoswap_Acer/CBASS_Master_data_clean.csv") %>%
+  read_csv("data/raw/20200628_Genoswap_Acer/CBASSGenoSwap2020_exactnames.csv") %>%
   mutate(Temp = parse_number(Tank)) %>%
   select(-X1, -Notes.Corrections) %>%
-  mutate(Genotype = gsub(" ", "", Genotype))
+  mutate(Genotype = gsub(" ", "", Genotype)) %>%
+  mutate(Genotype = gsub("-", "", Genotype))
 
 # filter out outliers and initial time point
 df <- df %>%
@@ -106,15 +107,15 @@ dff <- vals %>%
   left_join(counts) %>%
   group_by(nursery, geno) %>%
   mutate(resid.thresh = 2*sd(.resid, na.rm = TRUE)) %>%  # Calculate residual threshold as 3 standard deviations
-  mutate(cooksd.thresh = 6/n) %>%   # Calculate cook's distance threshold as 4/n
-  mutate(max_to_remove = floor(n * 0.10)) %>%
+  mutate(cooksd.thresh = 4/n) %>%   # Calculate cook's distance threshold as 4/n
+  mutate(max_to_remove = floor(n * 0.09)) %>%
   ungroup() %>%
-  mutate(problem = case_when(.cooksd > cooksd.thresh ~ "high cook's distance",
+  mutate(problem = case_when(.cooksd > cooksd.thresh & .resid > 0 ~ "high cook's distance",
                              abs(.resid) > resid.thresh ~ "high residual", 
                              TRUE ~ problem)) %>%
   group_by(nursery, geno, outlier = problem %in% c("high cook's distance", "high residual")) %>%
   mutate(n.outliers = n(),
-         rank.out = order(.cooksd)) %>%
+         rank.out = order(.cooksd, decreasing = TRUE)) %>%
   ungroup() %>%
   mutate(fvfm = case_when(outlier & rank.out <= max_to_remove ~ NA_real_, 
                           TRUE ~ fvfm)) 
