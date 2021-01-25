@@ -12,96 +12,254 @@ library(readxl)
 library(janitor)
 library(parzer)
 library(broom)
-library(tidyverse)
 library(lsmeans)
+library(drc)
+library(tidyverse)
+library(ggthemes)
 ```
 
 This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Mote_Acer.html), [FWC](FWC_Acer.html), [RRT](RRT_Acer.html), [CRF](CRF_Acer.html), [UM](UM_Acer.html), and [Kelsey's corals at NSU](KJS_Acer.html).
 
 
 ```{r}
-# Import data
+# Import cleaned datasets from each nursery
+clean_data_files <- list.files(path = "data/processed", 
+                               pattern = "*_clean.csv", 
+                               full.names = TRUE)
+clean_data <- clean_data_files %>% map_dfr(read_csv)
 
-# Import ed50 values for all genotypes
-ed50 <- read_csv("data/ed50_values.csv") %>%
-  mutate(genoN = factor(genoN, levels = genoN[order(ed50)])) %>%
+# Define dose-response curves using same constraints
+ll3 <- function(data) {
+  drm(fvfm ~ max_temp, data = data, 
+      fct = LL.3(names = c("hill", "max", "ED50")),
+      upperl = c(120, 0.72, 40),
+      lowerl = c(10, 0.55, 30))}
+
+# Fit model to each coral, get parameters, fitted values, and residuals
+mods <- clean_data %>%
+  nest(data = c(max_temp, fvfm)) %>%
+  # Fit the model to each coral
+  mutate(ll3 = map(data, ll3)) %>%
+  # Get model parameters and fitted values/residuals
+  mutate(pars = map(ll3, tidy),
+         pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
+
+# Extract ed50 parameter values from model fits
+ed50 <- mods %>% 
+  select(nursery, geno, date, pars) %>%
+  unnest(pars) %>%
+  filter(term == "ED50") %>%
   # Replace '(A)', etc. from geno names
-  mutate(geno = str_replace(geno, "\\(.*\\)", ""))
+  mutate(geno = str_replace(geno, "\\(.*\\)", "")) %>%
+  rename(name = geno)
+
+hills <- mods %>% 
+  select(nursery, geno, date, pars) %>%
+  unnest(pars) %>%
+  filter(term == "hill") 
+
+maxes <- mods %>% 
+  select(nursery, geno, date, pars) %>%
+  unnest(pars) %>%
+  filter(term == "max")
 
 # Import genotype metadata
-gmd <- read_csv("data/genotype_metadata.csv") %>%
+gmd <- read_csv("data/genotype_metadata_raw.csv") %>%
   mutate(nursery = tolower(nursery),
          across(everything(), str_squish),
          across(ends_with("lat"), ~signif(parse_lat(.), 6)),             # parse latitude
-         across(ends_with("lon"), ~signif(parse_lon(.), 6)))             # parse longitude
+         across(ends_with("lon"), ~signif(parse_lon(.), 6))) %>%        # parse longitude
+  mutate(ugeno = gsub(" ", "", ugeno)) %>%
+  select(nursery, name = geno, source_lat, source_lon, MMM_5km)
+
+# Import names key
+gkey <- read_csv("data/genotype_name_key.csv") %>%
+  mutate(alt0 = geno) %>%
+  pivot_longer(starts_with("alt"), names_to = "alt", values_to = "name") %>%
+  drop_na() %>%
+  select(geno, name)
 
 # Combine ed50 values with genotype metadata
-df <- inner_join(ed50, gmd) %>%
+df <- full_join(ed50, gmd) %>%
+  left_join(gkey) %>%
+  # Two genos from kjs/nsu not in metadata, use name as geno
+  mutate(geno = case_when(is.na(geno) ~ name, TRUE ~ geno)) %>%
   # Order nurseries from south to north
-  mutate(nursery = factor(nursery, levels = c("mote", "fwc", "rrt", "crf", "um", "kjs")))
+  mutate(nursery = factor(nursery, levels = c("mote", "fwc", "rrt", "crf", "um", "nsu"))) %>%
+  select(nursery, name, geno, date, ed50 = estimate, std.error, source_lat, source_lon, MMM_5km)
+
+# Filter to analyze only CBASS runs from Coral Reef II in August and October
+df <- df %>%
+  filter(date %in% c("2020-08", "2020-10"))
 ```
 
 # What is the range in thermal tolerance across all genotypes?
 
 ```{r}
+# Basic histogram
 ggplot(df, aes(x = ed50)) + 
   geom_histogram(binwidth = 0.1) +
   labs(x = "ED50 Tolerance (°C)", y = "Number of genotypes",
        title = "Histogram of ED50 values for all corals")
 
-summary(df$ed50)
+# Histogram colored by nursery with density plot
+hist1 <- df %>%
+  mutate(nursery = factor(nursery, levels = c("fwc", "um", "mote", "crf", "nsu", "rrt"))) %>%
+  ggplot(aes(x = ed50)) + 
+  geom_histogram(aes(fill = nursery), binwidth = 0.1, alpha = 0.4) +
+  #geom_density(aes(weight = 1/(std.error^2)), lwd = 1) +
+  geom_density(aes(y = ..count.. * 0.1)) +
+  theme_few() +
+  theme(legend.position = c(0.15, 0.65), legend.key.size = unit(0.25, "cm")) +
+  labs(x = "ED50 (°C)", y = "Count", title = expression(V[P]))
+
+
+# Remove nursery effect
+mod <- lm(ed50 ~ nursery, data = df)  # WEIGHTS???
+dd <- augment(mod) %>%
+  mutate(adj = mean(df$ed50) + .resid)
+
+# Is adjusted distribution normal?
+shapiro.test(dd$adj)
+
+# Get mean and sd from adjusted distribution
+meanadj <- mean(dd$adj)
+sdadj <- sd(dd$adj)
+
+hist2 <- ggplot(dd, aes(x = adj)) + 
+  geom_histogram(aes(y = ..count../sum(..count..)), binwidth = 0.1, alpha = 0.4) +
+  stat_function(fun = ~ dnorm(.x, meanadj, sdadj) * 0.1) +
+  geom_vline(aes(xintercept = meanadj)) +
+  geom_segment(aes(x = meanadj, xend = meanadj + sdadj, 
+                   y = dnorm(meanadj + sdadj, meanadj, sdadj) * 0.1,
+                   yend = dnorm(meanadj + sdadj, meanadj, sdadj) * 0.1),
+               arrow = arrow(length = unit(0.2,"cm"), ends = "both"), lwd = 0.1) +
+  xlim(qnorm(c(0.00001, 0.99999), meanadj, sdadj)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  annotate("text", x = meanadj - 0.1, y = 0.125, adj = 1,
+           label = paste0("mean = ", round(meanadj, 2))) +
+  annotate("text", x = meanadj + sdadj + 0.1, 
+           y = dnorm(meanadj + sdadj, meanadj, sdadj) * 0.1, 
+           adj = 0, label = paste0("s.d. = ", round(sdadj, 2))) +
+  theme_few() +
+  labs(x = "ED50 (°C) adjusted", y = "Percentage", title = expression(V[P] - V[E]))
+
+
+fig3 <- cowplot::plot_grid(
+  hist1 + xlim(qnorm(c(0.00001, 0.99999), meanadj, sdadj)), 
+  hist2, labels = "AUTO")
+
+ggsave("output/fig3.png", width = 172, height = 75, units = "mm")
 ```
 
-```{r, fig.width = 10}
-ggplot(df, aes(x = genoN, y = ed50, color = nursery)) +
-  geom_point() +
-  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+```{r, include = FALSE, eval = FALSE, fig.width = 10}
+df$genoN <- factor(paste0("g", group_indices(df, nursery, geno, date)))
+df %>%
+  drop_na(ed50) %>%
+  ggplot(aes(x = fct_reorder(genoN, ed50), y = ed50, color = nursery)) +
+  geom_point(size = 0.75) +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error), lwd = 0.25) +
   labs(x = "Genotype", y = "ED50 Tolerance (°C)",
        title = "ED50 (±SE) for all genotypes, colored by nursery")
 ```
 
-```{r, fig.width = 10}
-plotnurs <- function(data) {
-  nurs <- as.character(unique(data$nursery))
-  ggplot(data, aes(x = fct_reorder(ugeno, ed50), y = ed50, color = nursery)) +
-    geom_point() +
-    geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-    #facet_wrap(~nursery, scale = "free_x", ncol = 1) +
-    theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1)) +
-    labs(x = "Genotype", y = "ED50 Tolerance (°C)",
-         title = paste("ED50 (±SE) for all genotypes at", nurs)) +
-    scale_color_discrete(drop = FALSE)
-}
-
-plotnurs(filter(df, nursery == "mote"))
-plotnurs(filter(df, nursery == "fwc"))
-plotnurs(filter(df, nursery == "rrt"))
-plotnurs(filter(df, nursery == "crf"))
-plotnurs(filter(df, nursery == "um"))
-plotnurs(filter(df, nursery == "kjs"))
-```
-
 # Does thermal tolerance vary across nurseries?
 ```{r}
-ggplot(df, aes(x = nursery, y = ed50)) +
+# Weighted mean and sd by nursery
+wtd.stats <- df %>%
+  group_by(nursery) %>%
+  summarise(wtd.mean = Hmisc::wtd.mean(ed50, weights = 1/std.error^2),
+              wtd.sd = Hmisc::wtd.var(ed50, weights = 1/std.error^2) %>% sqrt())
+
+# Unweighted mean and sd by nursery
+unwtd.stats <- df %>%
+  group_by(nursery) %>%
+  summarise(mean = mean(ed50),
+              sd = sd(ed50))
+
+# Violin plot
+fig4 <- ggplot(df, aes(x = nursery, y = ed50)) +
   geom_violin(aes(fill = nursery)) +
   geom_dotplot(binaxis = "y", stackdir = "center", dotsize = 1, binwidth = 0.05, alpha = 0.2) +
-  stat_summary(fun.data = "mean_sdl",  fun.args = list(mult = 1), 
-               geom = "pointrange", color = "black", size = 0.7) +
-  labs(x = "Nursery", y = "ED50 Tolerance (°C)", 
-       title = "ED50 tolerance by nursery location")
+  # # Unweighted mean and SE
+  # geom_point(data = tidylsm, aes(y = estimate), size = 2) +
+  # geom_errorbar(data = tidylsm, aes(y = estimate, ymin = estimate - std.error, ymax = estimate + std.error),
+  #               width = 0) +
+  # # Unweighted mean and SD
+  # stat_summary(fun.data = "mean_sdl",  fun.args = list(mult = 1),
+  #              geom = "pointrange", color = "black", size = 0.5) +
+  # Weighted mean and SD
+  geom_point(data = wtd.stats, aes(y = wtd.mean), size = 2) +
+  geom_errorbar(data = wtd.stats, aes(y = wtd.mean, ymin = wtd.mean - wtd.sd, ymax = wtd.mean + wtd.sd),
+                width = 0) +
+  labs(x = "Nursery", y = "ED50 (°C)") +
+  theme_few() +
+  theme(legend.position = "none")
+fig4
 
-mod <- lm(ed50 ~ nursery, weights = 1/std.error, data = df)
-knitr::kable(anova(mod))
-tidymod <- tidy(anova(mod))
-nursvar <- tidymod$sumsq[1] / sum(tidymod$sumsq)
+# Raincloud plot - weighted
+source("https://raw.githubusercontent.com/datavizpyr/data/master/half_flat_violinplot.R")
+fig.w <- ggplot(df, aes(x = nursery, y = ed50, fill = nursery, weight = 1/std.error^2, group = nursery)) +
+  geom_hline(aes(yintercept = Hmisc::wtd.mean(ed50, 1/std.error^2)), 
+             lty = 2, col = "gray") +
+  geom_flat_violin(position = position_nudge(x = 0.2, y = 0), 
+                   adjust = 1, width = 1.8, alpha = 0.7, lwd = 0) +
+  geom_boxplot(position = position_nudge(x = 0.2, y = 0), width = 0.1,
+               outlier.shape = NA, alpha = 1, lwd = 0.25) +
+  geom_point(aes(size = 1/std.error^2, color = nursery), alpha = 0.7,
+             position = position_jitter(width = 0.075)) +
+  geom_point(data = wtd.stats, aes(x = nursery, y = wtd.mean), inherit.aes = FALSE,
+             position = position_nudge(x = 0, y = 0), size = 2, pch = 5) +
+  geom_errorbar(data = wtd.stats, inherit.aes = FALSE, width = 0, lwd = 0.25,
+                aes(x = nursery, y = wtd.mean, ymin = wtd.mean - wtd.sd, ymax = wtd.mean + wtd.sd),
+                position = position_nudge(x = 0, y = 0)) +
+  coord_flip() +
+  scale_size(range = c(0.5, 3)) +
+  theme_few() +
+  theme(legend.position = "none") +
+  labs(y = "ED50 (°C)", x = "Nursery")
+fig.w
 
-lsm <- lsmeans(mod, specs = "nursery")
-tidylsm <- tidy(lsm)
-tibble(multcomp::cld(lsm)) %>% knitr::kable()
+# Raincloud plot - unweighted
+fig.uw <- ggplot(df, aes(x = nursery, y = ed50, fill = nursery, group = nursery)) +
+  geom_hline(aes(yintercept = mean(ed50)), 
+             lty = 2, col = "gray") +
+  geom_flat_violin(position = position_nudge(x = 0.35, y = 0), 
+                   adjust = 1, width = 1.8, alpha = 0.7, lwd = 0.25) +
+  geom_boxplot(position = position_nudge(x = 0.2, y = 0), width = 0.125,
+               outlier.shape = NA, alpha = 0.7, lwd = 0.25) +
+  geom_point(aes(color = nursery), alpha = 0.7, size = 0.9,
+             position = position_jitter(width = 0.075)) +
+  geom_point(data = unwtd.stats, aes(x = nursery, y = mean), inherit.aes = FALSE,
+             position = position_nudge(x = 0, y = 0), size = 1.5, pch = 5) +
+  geom_errorbar(data = unwtd.stats, inherit.aes = FALSE, width = 0, lwd = 0.25,
+                aes(x = nursery, y = mean, ymin = mean - sd, ymax = mean + sd),
+                position = position_nudge(x = 0, y = 0)) +
+  coord_flip() +
+  theme_few() +
+  theme(legend.position = "none") +
+  labs(y = "ED50 (°C)", x = "Nursery")
+fig.uw
 
-meandiff <- diff(range(tidylsm$estimate))
-totrange <- diff(range(df$ed50))
+
+#ggsave("output/fig4.png", width = 112, height = 75, units = "mm")
+
+# Test for equal variance
+car::leveneTest(ed50 ~ nursery, data = df)
+bartlett.test(ed50 ~ nursery, data = df)
+## Unequal --  cannot use ANOVA
+
+kruskal.test(ed50 ~ nursery, data = df)
+test <- pairwise.wilcox.test(df$ed50, df$nursery,
+                 p.adjust.method = "BH")
+
+pvals <- tibble(reshape2::melt(test$p.value)) %>% drop_na() %>%
+  mutate(Var1 = factor(Var1, levels = levels(fct_reorder(wtd.stats$nursery, wtd.stats$wtd.mean)))) %>%
+  arrange(Var1)
+
+setNames(pull(pvals[,3]), paste(pvals$Var1, pvals$Var2, sep = "-")) %>%
+  multcompLetters()
+
 ```
 
 Yes, there is significant variation in thermal tolerance across nurseries. However, the effect size is relatively small: nursery explained `r round(nursvar*100, 1)`% of the total variation, meaning that most of the variation (`r 100-round(nursvar*100, 1)`%) occurs within nurseries. The difference in average ED50 values between the highest (RRT) and lowest nursery (FWC), was only `r round(meandiff, 1)`, while the total range of ED50 values across all corals was `r round(totrange, 1)`.
@@ -109,19 +267,128 @@ Yes, there is significant variation in thermal tolerance across nurseries. Howev
 # Does thermal tolerance differ for the same genotype grown at different nurseries?
 ```{r}
 multi <- df %>%
-  group_by(ugeno) %>%
+  group_by(geno) %>%
   filter(n_distinct(nursery) > 1)
 
 ggplot(multi, aes(x = nursery, y = ed50, color = nursery)) +
   geom_point() +
   geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-  facet_wrap(~ugeno) +
+  facet_wrap(~geno) +
   theme(legend.position = "none") +
   labs(x = "Nursery", y = "ED50 Tolerance (°C)",
        title = "Comparison of ED50 for genotypes found at multiple nurseries")
 
-# mod <- lm(ed50 ~ ugeno * nursery, weights = 1/std.error, data = multi)
-# anova(mod)
+ggplot(multi, aes(x = geno, y = ed50, color = nursery)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
+  theme(legend.position = "none")
+
+multi %>%
+  #mutate(nursery = factor(nursery, levels = c("fwc", "mote", "rrt", "crf"))) %>%
+  mutate(nursery = factor(nursery, levels = c("crf", "fwc", "mote", "rrt"))) %>%
+  filter(nursery %in% c("mote",  "crf", "fwc")) %>%
+  group_by(nursery, geno) %>%
+  summarize(meaned50 = mean(ed50)) %>%
+  ggplot(aes(x = nursery, y = meaned50, group = geno)) +
+  geom_point(aes(color = geno)) +
+  geom_line(color = "gray")
+
+multi %>%
+  mutate(nursery = factor(nursery, levels = c("fwc", "mote", "rrt", "crf"))) %>%
+  group_by(nursery, geno) %>%
+  summarize(meaned50 = mean(ed50)) %>%
+  ggplot(aes(x = nursery, y = meaned50, color = geno, group = geno)) +
+  coord_polar(theta = "x") +
+  geom_point() +
+  geom_line(aes(color = geno, group = geno)) +
+  theme(legend.position = "none")
+
+
+mod <- lm(ed50 ~ geno + nursery, weights = 1/std.error, data = multi)
+anova(mod)
+hiee <- multi %>%
+  group_by(nursery, geno) %>%
+  summarize(ed50 = mean(ed50), std.error = mean(std.error))
+mod <- lm(ed50 ~ geno + nursery, weights = 1/std.error^2, data = hiee)
+anova(mod)
+anova(mod)
+mod <- lm(ed50 ~ geno + nursery, weights = 1/std.error, data = filter(multi, nursery %in% c("fwc", "mote")))
+anova(mod)
+mod <- lm(ed50 ~ geno + nursery, weights = 1/std.error, data = filter(multi, nursery %in% c("crf", "mote")))
+anova(mod)
+mod <- lm(ed50 ~ geno * nursery, weights = 1/std.error, data = filter(multi, nursery %in% c("mote", "rrt")))
+anova(mod)
+
+multi %>%
+  ungroup() %>%
+  select(nursery, geno, ed50) %>%
+  pivot_wider(names_from = nursery, values_from = ed50, values_fn = mean) %>%
+  ggplot(aes(x = fwc, y = mote)) + 
+  geom_point() +
+  geom_smooth(method = "lm")
+
+library(GGally)
+multi %>%
+  ungroup() %>%
+  select(nursery, geno, ed50) %>%
+  pivot_wider(names_from = nursery, values_from = ed50, values_fn = mean) %>%
+  select(-geno) %>%
+  ggpairs()
+
+bb <- multi %>%
+  mutate(region = case_when(nursery %in% c("rrt", "crf") ~ "upper",
+                            nursery %in% c("mote", "fwc") ~ "lower"))
+mod <- lm(ed50 ~ geno + region, data = bb)
+anova(mod)
+
+# Can you bootstrap this?
+# i.e., using std.errors for each ed50 estimate, draw n random values for each, then ANOVA
+multi
+
+
+
+
+
+
+
+# control for geno diffs, look at spread due to being in diff. nurseries
+mod <- lm(ed50 ~ geno, data = multi)
+
+
+
+hiee <- augment(mod) %>%
+  mutate(overallmean = mean(multi$ed50),
+         adj = overallmean + .resid)
+
+hist(hiee$adj, xlim = c(34.5,38.5))
+var(hiee$ed50)
+var(hiee$adj)
+var(df$ed50)
+
+
+
+
+#passing-bablok for nursery cor?
+hi <- multi  %>%
+  filter(nursery %in% c("rrt", "fwc")) %>% 
+  group_by(nursery, geno) %>%
+  summarize(ed50 = mean(ed50), std.error = mean(std.error)) %>%
+  select(nursery, geno, ed50, std.error) %>%
+  pivot_wider(names_from = nursery, values_from = c(ed50, std.error)) %>%
+  drop_na()
+
+library(mcr)
+PBreg <- mcreg(hi$ed50_rrt, hi$ed50_fwc, method.reg = "PaBa",  method.ci = "bootstrap", nsamples = 9999)
+bounds <- with(hi, range(c(ed50_rrt - std.error_rrt, ed50_rrt + std.error_rrt), na.rm = TRUE))
+newdata <- tibble(ed50_mote = seq(bounds[1], bounds[2], 0.01))
+PBfit <- calcResponse(PBreg, x.levels = newdata$ed50_mote, alpha = 0.05) %>%
+  as_tibble()
+
+ggplot(hi, aes(x = ed50_rrt, y = ed50_fwc)) +
+  geom_errorbar(aes(xmin = ed50_rrt - std.error_rrt, xmax = ed50_rrt + std.error_rrt)) +
+  geom_errorbar(aes(ymin = ed50_fwc - std.error_fwc, ymax = ed50_fwc + std.error_fwc))
+
+deming(ed50_fwc ~ ed50_rrt, data = hi, xstd = std.error_rrt, ystd = std.error_fwc)
 ```
 
 I think there my be more genotypes in common, but with differing names, across different nurseries. Please let me know if you think you can help identify some of these that may be missing from the graph above...
@@ -135,8 +402,22 @@ ggplot(df, aes(x = source_lon, y = source_lat, color = ed50)) +
 ```
 
 ```{r}
-mod <- lm(ed50 ~ nursery + source_lat * source_lon, weights = 1/std.error, data = df)
+mod <- lm(ed50 ~ nursery + source_lat + source_lon, weights = 1/std.error, data = df)
 knitr::kable(anova(mod))
+
+df %>%
+  #filter(geno != "ML90") %>%
+  ggplot(aes(x = source_lat, y = ed50)) +
+  geom_point(size = 0.75) +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error), lwd = 0.25) +
+  geom_smooth(method = "lm", se = FALSE)
+
+df %>%
+  #filter(geno != "ML90") %>%
+  ggplot(aes(x = source_lon, y = ed50)) +
+  geom_point(size = 0.75) +
+  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error), lwd = 0.25) +
+  geom_smooth(method = "lm", se = FALSE)
 ```
   
 Neither source latitude or longitude is a significant predictor of ED50 values across all corals. 
@@ -144,8 +425,8 @@ Neither source latitude or longitude is a significant predictor of ED50 values a
 We can also look at whether there is a latitude effect within each nursery.  
 ```{r}
 mod <- lm(ed50 ~ source_lat * nursery, weights = 1/std.error, data = df)
-#anova(mod)
-#lstrends(mod, specs = "nursery", var = "source_lat")
+anova(mod)
+lstrends(mod, specs = "nursery", var = "source_lat")
 
 res <- augment(mod, left_join(mod$model, df))
 ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
@@ -167,5 +448,120 @@ ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
   geom_line(aes(y = .fitted)) +
   labs(x = "Source Latitude", y = "ED50 Tolerance (°C)",
        title = "ED50 Tolerance vs. source latitude, all nurseries")
+```
+
+# Temperature data
+```{r}
+sst <- tibble(
+  filename = list.files("data/sst_9km", full.names = TRUE),
+  data = map(filename, read_csv, col_names = c("yyyymm", "temp")),
+  coords = map(filename, ~ str_split_fixed(., "_", 4)),
+  lat = map_dbl(coords, ~ as.numeric(nth(., 3))),
+  lon = map_dbl(coords, ~ parse_number(nth(., 4)))
+) %>%
+  select(lat, lon, data)
+
+sst <- sst %>%
+  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6))))
+
+sst <- sst %>%
+  mutate(monthly_means = map(data, ~ group_by(., month) %>% summarize(mean = mean(temp))),
+         mmm = map_dbl(monthly_means, ~ max(.$mean)),
+         sumvar = map_dbl(data, ~ filter(.,  month %in% c("07", "08", "09")) %>% 
+                            summarize(var = var(temp)) %>% pull(var)))
+```
+
+```{r}
+summary(sst$mmm)
+dft <- sst %>%
+  distinct(source_lat = lat, source_lon = lon, mmm, sumvar) %>%
+  right_join(df)
+
+ggplot(dft, aes(x = sumvar, y = ed50, color = nursery)) + geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+
+modd <- lm(ed50 ~ sumvar * mmm + nursery, data = dft)
+anova(modd)
+lstrends(modd, var = "mmm", specs = "nursery")
+#plot(modd)
+
+augment(modd) %>%
+  ggplot(aes(x = mmm,  y = ed50, color = nursery, size = std.error)) + 
+  #geom_point(aes(size = `(weights)`)) +
+  geom_point() +
+  geom_line(aes(y = .fitted))
+```
+
+```{r}
+#  5  km sst
+ggplot(df, aes(x = as.numeric(MMM_5km), y = ed50)) + geom_point() +
+  geom_smooth(method = "lm")
+
+mod <- lm(ed50 ~ nursery, weights = 1/std.error^2, data = df)
+anova(mod)
+
+hi <- augment(mod) %>%
+  mutate(adj = mean(ed50) + .resid) %>%
+  left_join(df) %>%
+  mutate(MMM_5km = as.numeric(MMM_5km))
+
+mod <- lm(adj ~ MMM_5km, weights = 1/std.error^2, data = hi)
+augment(mod) %>%
+  ggplot(aes(x = MMM_5km, y = adj)) + geom_point() +
+  geom_line(aes(y = .fitted))
+```
+
+
+
+```{r}
+# Mean difference between two of the same geno at same nurs, two diff genos at same nurs, and two diff genos at diff nurs
+
+df2 <- df %>% 
+  group_by(nursery, geno) %>%
+  mutate(rep = row_number())
+
+
+mod <- lm(ed50 ~ nursery + geno/rep, data = df2)
+anova(mod)
+
+
+df2 %>% distinct(rep)
+unique(df2$rep)
+
+
+
+# Average within-replicate difference
+df2 %>%
+  filter(n() > 1) %>%
+  arrange(nursery, geno)
+
+bb <- df2 %>%
+  select(nursery, geno, ed50) %>%
+  group_by(nursery, geno) %>%
+  filter(n() > 1) %>%
+  nest(data = ed50) %>%
+  mutate(dist = map(data, ~c(dist(.))))
+
+bb %>% unnest(dist) %>%
+  filter(dist < 1) %>%
+  pull(dist) %>%
+  mean(.)
+  
+# Average within-nursery difference
+cc <- df2 %>%
+  group_by(nursery) %>%
+  select(nursery, ed50) %>%
+  nest(data = ed50) %>%
+  mutate(dist = map(data, ~c(dist(.))))
+
+cc %>% unnest(dist) %>%
+  pull(dist) %>%
+  mean(.)
+
+
+# Average difference
+dd <- df2 %>%
+  select(nursery, ed50)
+mean(dist(dd$ed50))
 ```
 
