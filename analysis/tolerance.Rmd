@@ -72,14 +72,12 @@ mods <- df %>%
          pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
 
 # Extract parameter values from model fits
-res <- mods %>% 
-  select(nursery, geno, name, date, pars) %>%
+res <- mods %>%
   unnest(pars) %>%
-  select(-curve) %>%
-  pivot_wider(id_cols = c(nursery, geno, name, date), 
-              names_from = term, 
+  pivot_wider(names_from = term, 
               values_from = c(estimate, std.error, statistic, p.value)) %>%
-  clean_names()
+  clean_names() %>%
+  select(!where(is.list), -curve)
 
 # Filter to analyze only CBASS runs from Coral Reef II in August and October
 res <- res %>%
@@ -112,7 +110,8 @@ anova(mod_nogeno, mod_geno)
 ggplot(res, aes(x = estimate_ed50)) + 
   geom_histogram(binwidth = 0.1) +
   labs(x = "ED50 Tolerance (°C)", y = "Number of genotypes",
-       title = "Histogram of ED50 values for all corals")
+       title = "Histogram of ED50 values for all corals") +
+  theme_few()
 
 # Histogram colored by nursery with density plot
 hist1 <- res %>%
@@ -221,137 +220,48 @@ ggsave("output/fig4.png", width = 120, height = 100, units = "mm")
 
 # How does ED50 vary for the same genotype grown at different nurseries?
 ```{r}
-# Subset genotypes present at more than one nursery
-multi <- res %>%
-  group_by(geno) %>%
-  filter(n_distinct(nursery) > 1) %>%
-  group_by(geno, nursery) %>%
-  summarize(estimate_ed50 = mean(estimate_ed50)) %>%
-  ungroup()
-
-# Test for equal variance across genotypes
-car::leveneTest(estimate_ed50 ~ geno, data = multi)
-bartlett.test(estimate_ed50 ~ geno, data = multi)
-
-# How many genotypes were present at more than one nursery
-multi %>%
-  count(geno, name = "n_nurs") %>%
-  count(n_nurs, name = "n_geno")
-
-# Fit model testing effects of genotype and nursery on ED50
-mod <- lm(estimate_ed50 ~ nursery + geno, data = multi)
-anova(mod)
-car::Anova(mod, type = 3)
-table1 <- tidy(car::Anova(mod, type = 3)) %>%
-  mutate(pctvar = sumsq / sum(sumsq) * 100)
-knitr::kable(table1)
-
-## There is a highly significant effect of nursery, indicating an environmental/acclimation effect. There is also a marginally significant effect of genotype, indicating ED50 also has a fixed genetic component. The marginal significance of genotype may be due to the fact that genotypes were only replicated at two (n=17) or three (n=13) nurseries. Genotype and nursery both explain similar percent of total variance (37.8% and 32.4%, respectively).
-```
-
-```{r, eval = FALSE, include = FALSE}
-# Visualizations of ED50 values for genotypes at multiple nurseries
-### None of these are really effective, but the correlations could be useful as supplemental figure. I think the ANOVA table showing a weak effect of genotype is most effective/efficient for the main text.
-
-# Plot ED50 by genotype
-ggplot(multi, aes(x = geno, y = estimate_ed50, color = nursery)) + geom_point() + stat_summary(color = "black", size = 0.5)
-ggplot(multi, aes(x = nursery, y = estimate_ed50, color = geno)) + geom_point() + stat_summary(color = "black", size = 0.5)
-
-# Plot correlations of ED50 values for same genotypes across nurseries
-library(GGally)
-multi %>%
-  ungroup() %>%
-  select(nursery, geno, estimate_ed50) %>%
-  pivot_wider(names_from = nursery, values_from = estimate_ed50, values_fn = mean) %>%
-  select(-geno) %>%
-  ggpairs()
-
-gatherpairs <- function(data, ..., 
-                        xkey = '.xkey', xvalue = '.xvalue',
-                        ykey = '.ykey', yvalue = '.yvalue',
-                        na.rm = FALSE, convert = FALSE, factor_key = FALSE) {
-  vars <- quos(...)
-  xkey <- enquo(xkey)
-  xvalue <- enquo(xvalue)
-  ykey <- enquo(ykey)
-  yvalue <- enquo(yvalue)
-
-  data %>% {
-    cbind(gather(., key = !!xkey, value = !!xvalue, !!!vars,
-                 na.rm = na.rm, convert = convert, factor_key = factor_key),
-          select(., !!!vars)) 
-  } %>% gather(., key = !!ykey, value = !!yvalue, !!!vars,
-               na.rm = na.rm, convert = convert, factor_key = factor_key)
-}
-
-multi2 <- multi %>%
-  pivot_wider(names_from = nursery, values_from = estimate_ed50) %>%
-  gatherpairs(fwc, crf, rrt, mote) %>%
-  drop_na()
-
-df3 <- multi2 %>%
-  group_by(.xkey, .ykey) %>%
-  nest() %>%
-  mutate(mod = map(data, ~ deming::deming(.yvalue ~ .xvalue, data = .x)),
-         int = map_dbl(mod, ~ coef(.x)[1]),
-         slp = map_dbl(mod, ~ coef(.x)[2]))
-
-ggplot(multi2, aes(x = .xvalue, y = .yvalue)) + 
-  geom_point() +
-  geom_abline(data = df3, aes(intercept = int, slope = slp)) + 
-  facet_grid(.ykey ~ .xkey, labeller = label_both)
-```
-
-# Adjust ED50 for nursery effect, then look for patterns across nurseries?
-```{r}
-# Subset genotypes present at more than one nursery
+# Get ED50s (adjusted for nursery effect) for genotypes present at multiple nurseries
 multi.adj <- res.adj %>%
+  # Filter genotypes present at more than one nursery
   group_by(geno) %>%
   filter(n_distinct(nursery) > 1) %>%
-  #filter(var(ed50_adj) < 0.15) %>%
+  # If genotype run more than once at a nursery, use mean ed50 within nursery
   group_by(geno, nursery) %>%
   summarize(ed50_adj = mean(ed50_adj)) %>%
-  ungroup()
-
-# Test for equal variance across genotypes
-car::leveneTest(ed50_adj ~ geno, data = multi.adj)    # significant...
-bartlett.test(ed50_adj ~ geno, data = multi.adj)    # not significant...
-
-multi.var <- multi.adj %>%
+  ungroup() %>%
+  # Reorder genotypes based on mean ed50 across nurseries
   group_by(geno) %>%
-  summarize(lowvar = var(ed50_adj) < 0.1)
+  summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
+  right_join(multi.adj) %>%
+  mutate(geno = fct_reorder(geno, geno_mean_ed50))
 
-multi.adj.means <- multi.adj %>%
-  group_by(geno) %>%
-  summarize(mean_ed50_adj = mean(ed50_adj)) %>%
-  mutate(geno = fct_reorder(geno, mean_ed50_adj))
-
-multi.adj <- multi.adj %>%
-  left_join(multi.var) %>%
-  mutate(geno = factor(geno, levels = levels(multi.adj.means$geno)))
+# Plot ED50adj by genotype
+ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, group = geno)) + 
+  geom_point(size = 2, alpha = 0.75) + 
+  geom_point(aes(y = geno_mean_ed50), pch = 1, color = "black", stroke = 0.25)+
+  stat_summary(fun.data = mean_se, geom = "errorbar", color = "black", lwd = 0.25, width = 0.25) +
+  theme_few() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Genotype", y = "Adjusted ED50 (°C)") +
+  ylim(35, 37.7)
   
+# Test for equal variance across genotypes
+car::leveneTest(ed50_adj ~ geno, data = multi.adj)    # p = 0.019 => cannot use classic ANOVA
 
-# Plot ED50 by genotype
-ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery)) + geom_point(size = 2) + 
-  stat_summary(color = "black", size = 0.5, pch = 1)# +
-  #facet_wrap(~lowvar, scales = "free_x")
-#ggplot(multi.adj, aes(x = nursery, y = ed50_adj, color = geno, group = geno)) + geom_point() + geom_line()
+# Test for differences among genotypes with Welch's ANOVA
+(welch <- oneway.test(ed50_adj ~ geno, data = multi.adj, var.equal = FALSE))
+## Significant effect of genotype. Interpretation: ED50 value has a strong genetic component, and thermal tolerance phenotypes for a genet are reproducible even when genet moved to new environment.
 
-mod <- lm(ed50_adj ~ geno, data = multi.adj)
-hist(residuals(mod))
-shapiro.test(residuals(mod))
-anova(mod)  # regular anova is not significant
-kruskal.test(multi.adj$ed50_adj, multi.adj$geno) # not significant
-car::Anova(mod, white.adjust = TRUE)   # white-adjusted (for heteroscedasticity) anova is highly significant
-oneway.test(ed50_adj ~ geno, data = multi.adj, var.equal = FALSE)    # SIGNIFICANT EFFECT OF GENO IN WELCH ANOVA
-
-
+# Estimate variance explained by genotype
+omega.squared <- function(WelchF, df, N) df * (WelchF - 1) / (df * (WelchF - 1) + N)
+omega.squared(WelchF = welch$statistic[[1]], df = welch$parameter[[1]], N = nrow(multi.adj))
+## Genotype explains 49% of variance in ED50 measured across nurseries. Residual variance may be due to genotype by environment interactions (e.g., differential acclimatization of genotypes to different nursery environments), or CBASS run variability & measurement error.
 ```
 
 # Is thermal tolerance related to source latitude and longitude?
 ```{r, eval = FALSE, fig.width = 10}
 # Combine ED50 data with genotype metadata
-res <- res %>%
+res.adj <- res.adj %>%
   left_join(gmd)
 
 # ggplot(res, aes(x = source_lon, y = source_lat, color = estimate_ed50)) +
@@ -359,7 +269,7 @@ res <- res %>%
 #   scale_color_gradient(low = "blue", high = "red") +
 #   labs(x = "Source Longitude", y = "Source Latitude", color = "ED50 Tolerance (°C)")
 
-mod <- lm(estimate_ed50 ~ source_lat + source_lon + nursery, data = res)
+mod <- lm(ed50_adj ~ source_lat + source_lon, data = res.adj)
 anova(mod)
 car::Anova(mod, type = 3)
 
