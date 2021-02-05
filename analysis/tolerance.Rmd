@@ -258,176 +258,73 @@ omega.squared(WelchF = welch$statistic[[1]], df = welch$parameter[[1]], N = nrow
 ## Genotype explains 49% of variance in ED50 measured across nurseries. Residual variance may be due to genotype by environment interactions (e.g., differential acclimatization of genotypes to different nursery environments), or CBASS run variability & measurement error.
 ```
 
-# Is thermal tolerance related to source latitude and longitude?
+# Is thermal tolerance related to source colony latitude and longitude?
 ```{r, eval = FALSE, fig.width = 10}
-# Combine ED50 data with genotype metadata
-res.adj <- res.adj %>%
-  left_join(gmd)
-
-# ggplot(res, aes(x = source_lon, y = source_lat, color = estimate_ed50)) +
-#   geom_point(alpha = 0.5) +
-#   scale_color_gradient(low = "blue", high = "red") +
-#   labs(x = "Source Longitude", y = "Source Latitude", color = "ED50 Tolerance (°C)")
-
 mod <- lm(ed50_adj ~ source_lat + source_lon, data = res.adj)
 anova(mod)
-car::Anova(mod, type = 3)
 
-res %>%
-  ggplot(aes(x = source_lat, y = estimate_ed50)) +
+lat.plot <- ggplot(res.adj, aes(x = source_lat, y = ed50_adj)) +
   geom_point(size = 0.75) +
-  #geom_errorbar(aes(ymin = estimate_ed50 - std_error_ed50, ymax = estimate_ed50 + std_error_ed50), lwd = 0.25) +
-  geom_smooth(method = "lm", se = FALSE)
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_few() +
+  labs(x = "Latitude", y = "Adjusted ED50 (°C)")
 
-res %>%
-  ggplot(aes(x = source_lon, y = estimate_ed50)) +
+lon.plot <- ggplot(res.adj, aes(x = source_lon, y = ed50_adj)) +
   geom_point(size = 0.75) +
-  #geom_errorbar(aes(ymin = estimate_ed50 - std_error_ed50, ymax = estimate_ed50 + std_error_ed50), lwd = 0.25) +
-  geom_smooth(method = "lm", se = FALSE)
-```
-  
-Neither source latitude or longitude is a significant predictor of ED50 values across all corals. 
-
-We can also look at whether there is a latitude effect within each nursery.  
-```{r, eval = FALSE}
-mod <- lm(ed50 ~ source_lat * nursery, weights = 1/std.error, data = df)
-anova(mod)
-lstrends(mod, specs = "nursery", var = "source_lat")
-
-res <- augment(mod, left_join(mod$model, df))
-ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
-  geom_point() +
-  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-  geom_line(aes(y = .fitted)) +
-  geom_smooth(se = FALSE, lty = 2, lwd = 0.5) +
-  facet_wrap(~nursery, scales = "free") +
-  labs(x = "Source Latitude", y = "ED50 Tolerance (°C)",
-       title = "ED50 Tolerance vs. source latitude, by nursery")
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_few() +
+  labs(x = "Longitude", y = NULL)
 ```
 
-There does not appear to be much if any effect of source latitude. Solid lines are linear regression fits, and dashed lines are loess smooths for each nursery. Note the different latitudinal ranges for each nursery -- below all are plotted together.
-
-```{r, eval = FALSE}
-ggplot(res, aes(x = source_lat, y = ed50, group = nursery, color = nursery)) +
-  geom_point() +
-  geom_errorbar(aes(ymin = ed50 - std.error, ymax = ed50 + std.error)) +
-  geom_line(aes(y = .fitted)) +
-  labs(x = "Source Latitude", y = "ED50 Tolerance (°C)",
-       title = "ED50 Tolerance vs. source latitude, all nurseries")
-```
-
-# Temperature data
-```{r, eval = FALSE}
-sst <- tibble(
+# Is thermal tolerance related to source colony temperature regime?
+```{r, eval = TRUE}
+# Import 9km SST data
+sst9 <- tibble(
   filename = list.files("data/sst_9km", full.names = TRUE),
   data = map(filename, read_csv, col_names = c("yyyymm", "temp")),
-  coords = map(filename, ~ str_split_fixed(., "_", 4)),
+  coords = map(filename, ~ str_split_fixed(basename(.), "_", 4)),
   lat = map_dbl(coords, ~ as.numeric(nth(., 3))),
   lon = map_dbl(coords, ~ parse_number(nth(., 4)))
 ) %>%
   select(lat, lon, data)
 
-sst <- sst %>%
-  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6))))
-
-sst <- sst %>%
+sst9 <- sst9 %>%
+  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
   mutate(monthly_means = map(data, ~ group_by(., month) %>% summarize(mean = mean(temp))),
-         mmm = map_dbl(monthly_means, ~ max(.$mean)),
+         mmm_9km = map_dbl(monthly_means, ~ max(.$mean)),
          sumvar = map_dbl(data, ~ filter(.,  month %in% c("07", "08", "09")) %>% 
                             summarize(var = var(temp)) %>% pull(var)))
+
+# Join with results and sample metadata
+dft <- sst9 %>%
+  distinct(source_lat = lat, source_lon = lon, mmm_9km, sumvar) %>%
+  right_join(res.adj) %>%
+  mutate(mmm_5km = as.numeric(mmm_5km))
+
+# Test effect of MMM from 9km data
+mod9km <- lm(ed50_adj ~ mmm_9km, data = dft)
+anova(mod9km)
+
+# Test effect of MMM from 5km data
+mod5km <- lm(ed50_adj ~ mmm_5km, data = dft)
+anova(mod5km)
+
+# Plots
+mmm9.plot <- ggplot(dft, aes(x = mmm_9km, y = ed50_adj)) +
+  geom_point(size = 0.75) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_few() +
+  labs(x = "MMM (9km)", y = NULL)
+
+mmm5.plot <- ggplot(dft, aes(x = mmm_5km, y = ed50_adj)) +
+  geom_point(size = 0.75) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_few() +
+  labs(x = "MMM (5km)", y = NULL)
 ```
 
-```{r, eval = FALSE}
-summary(sst$mmm)
-dft <- sst %>%
-  distinct(source_lat = lat, source_lon = lon, mmm, sumvar) %>%
-  right_join(df)
-
-ggplot(dft, aes(x = sumvar, y = ed50, color = nursery)) + geom_point() +
-  geom_smooth(method = "lm", se = FALSE)
-
-modd <- lm(ed50 ~ sumvar * mmm + nursery, data = dft)
-anova(modd)
-lstrends(modd, var = "mmm", specs = "nursery")
-#plot(modd)
-
-augment(modd) %>%
-  ggplot(aes(x = mmm,  y = ed50, color = nursery, size = std.error)) + 
-  #geom_point(aes(size = `(weights)`)) +
-  geom_point() +
-  geom_line(aes(y = .fitted))
+# Plot (lack of) relationship between ED50 and lat/lon/mmm
+```{r}
+cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
+                   rel_widths = c(1.07,1,1,1))
 ```
-
-```{r, eval = FALSE}
-#  5  km sst
-ggplot(df, aes(x = as.numeric(MMM_5km), y = ed50)) + geom_point() +
-  geom_smooth(method = "lm")
-
-mod <- lm(ed50 ~ nursery, weights = 1/std.error^2, data = df)
-anova(mod)
-
-hi <- augment(mod) %>%
-  mutate(adj = mean(ed50) + .resid) %>%
-  left_join(df) %>%
-  mutate(MMM_5km = as.numeric(MMM_5km))
-
-mod <- lm(adj ~ MMM_5km, weights = 1/std.error^2, data = hi)
-augment(mod) %>%
-  ggplot(aes(x = MMM_5km, y = adj)) + geom_point() +
-  geom_line(aes(y = .fitted))
-```
-
-
-
-```{r, eval = FALSE}
-# Mean difference between two of the same geno at same nurs, two diff genos at same nurs, and two diff genos at diff nurs
-
-df2 <- df %>% 
-  group_by(nursery, geno) %>%
-  mutate(rep = row_number())
-
-
-mod <- lm(ed50 ~ nursery + geno/rep, data = df2)
-anova(mod)
-
-
-df2 %>% distinct(rep)
-unique(df2$rep)
-
-
-
-# Average within-replicate difference
-df2 %>%
-  filter(n() > 1) %>%
-  arrange(nursery, geno)
-
-bb <- df2 %>%
-  select(nursery, geno, ed50) %>%
-  group_by(nursery, geno) %>%
-  filter(n() > 1) %>%
-  nest(data = ed50) %>%
-  mutate(dist = map(data, ~c(dist(.))))
-
-bb %>% unnest(dist) %>%
-  filter(dist < 1) %>%
-  pull(dist) %>%
-  mean(.)
-  
-# Average within-nursery difference
-cc <- df2 %>%
-  group_by(nursery) %>%
-  select(nursery, ed50) %>%
-  nest(data = ed50) %>%
-  mutate(dist = map(data, ~c(dist(.))))
-
-cc %>% unnest(dist) %>%
-  pull(dist) %>%
-  mean(.)
-
-
-# Average difference
-dd <- df2 %>%
-  select(nursery, ed50)
-mean(dist(dd$ed50))
-```
-
