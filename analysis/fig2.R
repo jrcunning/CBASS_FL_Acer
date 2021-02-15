@@ -25,8 +25,7 @@ p1 <- ggplot(df, aes(x = time, y = set_point, group = factor(max_temp))) +
   scale_color_gradient2(midpoint=34, low="#4575b4", mid="#fee090", high="#d73027") +
   scale_x_datetime(breaks = "1 hour", expand = c(0,0),
                    labels = function(x) paste0(difftime(x, myTime + hm("07:00"), units = "hours"), ":00")) +
-  labs(x = "Time from local sunset", y = "Temperature set point (°C)",
-       title = "CBASS temperature profiles") +
+  labs(x = "Time from local sunset", y = "Temperature set point (°C)") +
   annotate("text", x = myTime + hm("08:30"), y = 30.1, angle = 90, adj = 0,
            label = expression(paste("} \u2013 " , italic(F[V]/F[M]), " measured"))) +
   theme_few() +
@@ -63,12 +62,11 @@ p2 <- ggplot(td, aes(x = max_temp, y = fvfm)) +
   scale_y_continuous(limits = c(0, 0.75)) +
   theme_few() +
   theme(legend.position = "none") +
-  labs(y = expression(italic(F[V]/F[M])), x = "Maximum temperature (°C)",
-       title = "Dose-response curve fitting")
+  labs(y = expression(italic(F[V]/F[M])), x = "Maximum temperature (°C)")
 
 
 # Composite figure
-fig1 <- cowplot::plot_grid(p1, p2,
+fig2 <- cowplot::plot_grid(p1, p2,
                            labels = "AUTO")
 
 ggsave("output/fig2.png", width = 172, height = 75, units = "mm")
