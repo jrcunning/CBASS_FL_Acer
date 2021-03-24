@@ -1,12 +1,14 @@
 ---
-title: "Thermal tolerance analysis"
+title: "CBASS 2020: Thermal tolerance of *A. cervicornis* across 6 Florida coral nurseries"
+author: Ross Cunning
+date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document:
     code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = TRUE)
 
 library(readxl)
 library(janitor)
@@ -17,10 +19,11 @@ library(drc)
 library(tidyverse)
 library(ggthemes)
 library(multcompView)
+library(ggpubr)
+library(mcr)
 ```
 
-This document analyzes the ED50 values (thermal tolerance metrics) derived for each individual coral genotype. Data filtering, dose-response curve fitting, and calculation of ED50 values for each coral can be found [here](tidy_PAM.html), and raw data from each CBASS run can be found here: [Mote](Mote_Acer.html), [FWC](FWC_Acer.html), [RRT](RRT_Acer.html), [CRF](CRF_Acer.html), [UM](UM_Acer.html), and [Kelsey's corals at NSU](KJS_Acer.html).
-
+This document analyzes thermal tolerance metrics (ED50) derived from each coral genotype measured at each nursery on the R/V *Coral Reef II* in the summer and fall of 2020. ED50 values are analyzed for differences among nurseries, and effects of source colony location and temperature regime. For a subset of corals, ED50 values are compared to values obtained from the same genets at the same nurseries in spring 2020, in a separate, independent set of CBASS assays.
 
 ```{r import_data}
 # Import cleaned datasets from each nursery
@@ -46,7 +49,7 @@ gkey <- read_csv("data/genotype_name_key.csv") %>%
   select(geno, name)
 
 # Combine cleaned data with genotype metadata
-df <- clean_data %>%
+df.all <- clean_data %>%
   rename(name = geno) %>%
   left_join(gkey) %>%
   select(nursery, geno, name, max_temp, fvfm, date) %>%
@@ -63,7 +66,7 @@ ll3 <- function(data) {
       lowerl = c(10, 0.55, 30))}
 
 # Fit model to each coral, get parameters, fitted values, and residuals
-mods <- df %>%
+mods <- df.all %>%
   nest(data = c(max_temp, fvfm)) %>%
   # Fit the model to each coral
   mutate(ll3 = map(data, ll3)) %>%
@@ -72,7 +75,7 @@ mods <- df %>%
          pred = map2(ll3, data, ~augment(.x, drop_na(.y, fvfm))))
 
 # Extract parameter values from model fits
-res <- mods %>%
+res.all <- mods %>%
   unnest(pars) %>%
   pivot_wider(names_from = term, 
               values_from = c(estimate, std.error, statistic, p.value)) %>%
@@ -80,13 +83,23 @@ res <- mods %>%
   select(!where(is.list), -curve)
 
 # Filter to analyze only CBASS runs from Coral Reef II in August and October
-res <- res %>%
+res <- res.all %>%
   filter(date %in% c("2020-08", "2020-10"))
 ```
 
-# Do different genotypes have different thermal tolerance?
+# How many corals and unique genotypes were tested?
+```{r}
+res %>%
+  summarize(ncoral = n_distinct(nursery, name),
+            ngeno = n_distinct(geno)) %>%
+  knitr::kable()
+```
+
 
 ```{r test_geno_effect, eval = FALSE, include = FALSE}
+# Do different genotypes have different thermal tolerance?
+
+
 # Fit single curve without genotype as a factor
 mod_nogeno <- drm(fvfm ~ max_temp, data = df, 
       fct = LL.3(names = c("hill", "max", "ED50")),
@@ -105,13 +118,13 @@ anova(mod_nogeno, mod_geno)
 
 # What is the range in thermal tolerance across all genotypes?
 
-```{r ed50_histograms}
+```{r ed50_histograms, fig.width = 11}
 # Basic histogram
-ggplot(res, aes(x = estimate_ed50)) + 
-  geom_histogram(binwidth = 0.1) +
-  labs(x = "ED50 Tolerance (°C)", y = "Number of genotypes",
-       title = "Histogram of ED50 values for all corals") +
-  theme_few()
+# ggplot(res, aes(x = estimate_ed50)) + 
+#   geom_histogram(binwidth = 0.1) +
+#   labs(x = "ED50 Tolerance (°C)", y = "Number of genotypes",
+#        title = "Histogram of ED50 values for all corals") +
+#   theme_few()
 
 # Histogram colored by nursery with density plot
 hist1 <- res %>%
@@ -122,15 +135,11 @@ hist1 <- res %>%
   theme_few() +
   theme(legend.position = c(0.15, 0.65), legend.key.size = unit(0.25, "cm")) +
   labs(x = "ED50 (°C)", y = "Count", title = expression(V[P]))
-hist1
 
 # Remove nursery effect
 mod <- lm(estimate_ed50 ~ nursery, data = res)
 res.adj <- augment(mod, data = res) %>%
   mutate(ed50_adj = mean(res$estimate_ed50) + .resid)
-
-# Is adjusted distribution normal?
-shapiro.test(res.adj$ed50_adj)
 
 # Get mean and sd from adjusted distribution
 meanadj <- mean(res.adj$ed50_adj)
@@ -153,43 +162,75 @@ hist2 <- ggplot(res.adj, aes(x = ed50_adj)) +
            adj = 0, label = paste0("s.d. = ", round(sdadj, 2))) +
   theme_few() +
   labs(x = "ED50 (°C) adjusted", y = "Percentage", title = expression(V[P] - V[E]))
-hist2
+
 
 # Combine histograms into multi-panel figure
 fig3 <- cowplot::plot_grid(
   hist1 + xlim(qnorm(c(0.00001, 0.99999), meanadj, sdadj)), 
   hist2, labels = "AUTO")
+fig3
+
+# Summarize original distribution
+tidy(summary(res$estimate_ed50)) %>%
+  knitr::kable(caption = "Summary of unadjusted ED50 values")
+
+# Is adjusted distribution normal?
+tidy(shapiro.test(res.adj$ed50_adj)) %>% 
+  knitr::kable(caption = "Normality test for adjusted ED50 values")
 
 ggsave("output/fig3.png", width = 172, height = 75, units = "mm")
 ```
 
-# Does thermal tolerance vary across nurseries?
+After adjusting for variation due to nursery location (i.e., environment), ED50 values are approximately normally distributed, with a mean of 35.98°C and standard deviation of 0.38°C. This is the variance due to genetic effects (and measurement error).
 
-```{r nursery_effects}
+```{r}
+
+
+n <- 100000
+lo <- 0.1 / 100
+hi <- 99.9 / 100
+lohi <- qnorm(c(lo, hi), meanadj, sdadj)
+lohi
+diff(lohi)
+lo * n
+hi * n
+```
+
+# How does thermal tolerance vary across nurseries?
+
+```{r nursery_effects, fig.width = 5}
 # Test for equal variance across nurseries
-car::leveneTest(estimate_ed50 ~ nursery, data = res)
-bartlett.test(estimate_ed50 ~ nursery, data = res)
-## Unequal variance among nurseries -- cannot use ANOVA
+car::leveneTest(estimate_ed50 ~ nursery, data = res) %>%
+  tidy() %>%
+  knitr::kable(caption = "Levene's test for homogeneity of variance")
+## Unequal variance among nurseries -- use Welch ANOVA
+welch <- oneway.test(estimate_ed50 ~ nursery, data = res)
+tidy(welch) %>% knitr::kable(caption = "Welch ANOVA table")
+# Variance explained by nursery
+omega.squared <- function(WelchF, df, N) df * (WelchF - 1) / (df * (WelchF - 1) + N)
+tibble(omega.squared = omega.squared(
+  WelchF = welch$statistic[[1]], df = welch$parameter[[1]], N = nrow(res))) %>%
+  knitr::kable(caption = "Variance explained by nursery")
 
 # Get mean and sd by nursery for plotting
 nurs.stats <- res %>%
   group_by(nursery) %>%
   summarise(mean = mean(estimate_ed50), sd = sd(estimate_ed50)) %>%
-  ungroup() #%>%
-  #mutate(group = factor(group))
+  ungroup()
+
+# Median pairwise difference between nurseries
+(mpwdiff <- median(dist(nurs.stats$mean)))
 
 # Use pairwise wilcox to test for differences in ED50 among nurseries
-test <- pairwise.wilcox.test(res$estimate_ed50, res$nursery, p.adjust.method = "BH")
+test <- pairwise.wilcox.test(res$estimate_ed50, res$nursery, p.adjust.method = "bonf")
 pvals <- tibble(reshape2::melt(test$p.value)) %>% drop_na() %>%
   mutate(Var1 = factor(Var1, levels = levels(fct_reorder(nurs.stats$nursery, nurs.stats$mean)))) %>%
   arrange(Var1)
-stats <- setNames(pull(pvals[,3]), paste(pvals$Var1, pvals$Var2, sep = "-")) %>% multcompLetters()
+stats <- setNames(pull(pvals[,3]), paste(pvals$Var1, pvals$Var2, sep = "-")) %>%
+  multcompLetters(threshold = 0.01)
 lett <- enframe(stats$monospacedLetters, name = "nursery", value = "group")
 nurs.stats <- left_join(nurs.stats, lett)
-  
-# Variance explained by nursery
-tidy(aov(estimate_ed50 ~ nursery, data = res)) %>%
-  mutate(pct.var = sumsq / sum(sumsq))
+
 
 # Raincloud plot
 source("https://raw.githubusercontent.com/datavizpyr/data/master/half_flat_violinplot.R")
@@ -218,8 +259,25 @@ nurs.fig
 ggsave("output/fig4.png", width = 120, height = 100, units = "mm")
 ```
 
-# How does ED50 vary for the same genotype grown at different nurseries?
+There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different set of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
+
 ```{r}
+# Amount of variance within nurseries relative to population variance
+nursvar <- res.adj %>%
+  group_by(nursery) %>%
+  summarise(svar = sum((ed50_adj - mean(ed50_adj))^2) / n(),
+            var = var(ed50_adj)) %>%
+  ungroup()
+
+totvar <- var(res$estimate_ed50)
+
+nursvar %>%
+  mutate(relvar = var / totvar)
+```
+
+
+# How does thermal tolerance vary for the same genotype grown at different nurseries?
+```{r, include = T, eval = T}
 # Get ED50s (adjusted for nursery effect) for genotypes present at multiple nurseries
 multi.adj <- res.adj %>%
   # Filter genotypes present at more than one nursery
@@ -228,55 +286,200 @@ multi.adj <- res.adj %>%
   # If genotype run more than once at a nursery, use mean ed50 within nursery
   group_by(geno, nursery) %>%
   summarize(ed50_adj = mean(ed50_adj)) %>%
-  ungroup() %>%
-  # Reorder genotypes based on mean ed50 across nurseries
+  ungroup()
+# Reorder genotypes based on mean ed50 across nurseries
+multi.adj <- multi.adj %>%
   group_by(geno) %>%
   summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
   right_join(multi.adj) %>%
   mutate(geno = fct_reorder(geno, geno_mean_ed50))
 
+# multi.adj %>%
+#   count(geno, name = "n_nurs") %>%
+#   count(n_nurs, name = "n_geno")
+
+# multi <- res %>%
+#   group_by(geno) %>%
+#   filter(n_distinct(nursery) > 1) %>%
+#   # If genotype run more than once at a nursery, use mean ed50 within nursery
+#   group_by(geno, nursery) %>%
+#   summarize(estimate_ed50 = mean(estimate_ed50)) %>%
+#   ungroup()
+# 
+# # Adjust for nursery differences
+# multi.adj <- multi %>%
+#   group_by(nursery) %>%
+#   summarise(nurs_mean = mean(estimate_ed50)) %>%
+#   ungroup() %>%
+#   right_join(multi) %>%
+#   mutate(.resid = estimate_ed50 - nurs_mean,
+#          ed50_adj = mean(estimate_ed50) + .resid)
+# multi.adj <- multi.adj %>%
+#   # Reorder genotypes based on mean ed50 across nurseries
+#   group_by(geno) %>%
+#   summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
+#   right_join(multi.adj) %>%
+#   mutate(geno = fct_reorder(geno, geno_mean_ed50))
+  
+
 # Plot ED50adj by genotype
 ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, group = geno)) + 
-  geom_point(size = 2, alpha = 0.75) + 
-  geom_point(aes(y = geno_mean_ed50), pch = 1, color = "black", stroke = 0.25)+
+  geom_point(size = 1.5, alpha = 0.75) + 
+  geom_point(aes(y = geno_mean_ed50), pch = 1, color = "black", stroke = 0.25, size = 2)+
   stat_summary(fun.data = mean_se, geom = "errorbar", color = "black", lwd = 0.25, width = 0.25) +
   theme_few() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(x = "Genotype", y = "Adjusted ED50 (°C)") +
-  ylim(35, 37.7)
-  
-# Test for equal variance across genotypes
-car::leveneTest(ed50_adj ~ geno, data = multi.adj)    # p = 0.019 => cannot use classic ANOVA
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text = element_text(size = 8),
+        legend.position = c(0.1, 0.8)) +
+  labs(x = "Genotype", y = "Adjusted ED50 (°C)")
 
-# Test for differences among genotypes with Welch's ANOVA
-(welch <- oneway.test(ed50_adj ~ geno, data = multi.adj, var.equal = FALSE))
-## Significant effect of genotype. Interpretation: ED50 value has a strong genetic component, and thermal tolerance phenotypes for a genet are reproducible even when genet moved to new environment.
+tidy(anova(lm(ed50_adj ~ geno, data = multi.adj))) %>%
+  knitr::kable()
 
-# Estimate variance explained by genotype
-omega.squared <- function(WelchF, df, N) df * (WelchF - 1) / (df * (WelchF - 1) + N)
-omega.squared(WelchF = welch$statistic[[1]], df = welch$parameter[[1]], N = nrow(multi.adj))
-## Genotype explains 49% of variance in ED50 measured across nurseries. Residual variance may be due to genotype by environment interactions (e.g., differential acclimatization of genotypes to different nursery environments), or CBASS run variability & measurement error.
+library(GGally)
+multi.adj %>%
+  select(nursery, geno, ed50_adj) %>%
+  pivot_wider(names_from = nursery, values_from = ed50_adj, values_fn = mean) %>%
+  select(-geno) %>%
+  ggpairs()
+
+library(RVenn)
+overlap <- res.adj %>%
+  distinct(nursery, geno) %>%
+  {split(.$geno, .$nursery)} %>%
+  Venn(.) %>%
+  overlap_pairs(.) %>%
+  map(length) %>%
+  unlist()
+overlap
+hist(overlap)
+mean(overlap)
+median(overlap[overlap > 0])
+
+#ggsave("output/fig5.png", width = 90, height = 75, units = "mm")
+
+# # Randomize ed50 values
+# multi.adj.r <- multi.adj %>%
+#   select(-geno_mean_ed50) %>%
+#   mutate(ed50_adj = sample(ed50_adj))
+# multi.adj.r %>%
+#   # Reorder genotypes based on mean ed50 across nurseries
+#   group_by(geno) %>%
+#   summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
+#   right_join(multi.adj.r) %>%
+#   ungroup() %>%
+#   mutate(geno = fct_reorder(geno, geno_mean_ed50)) %>%
+#   ggplot(aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, group = geno)) + 
+#   geom_point(size = 1.5, alpha = 0.75) + 
+#   geom_point(aes(y = geno_mean_ed50), pch = 1, color = "black", stroke = 0.25, size = 2)+
+#   stat_summary(fun.data = mean_se, geom = "errorbar", color = "black", lwd = 0.25, width = 0.25) +
+#   theme_few() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1),
+#         axis.text = element_text(size = 8),
+#         legend.position = c(0.1, 0.8)) +
+#   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
+#   
+# # Test for equal variance across genotypes
+# car::leveneTest(ed50_adj ~ geno, data = multi.adj.r)    # p = 0.019 => cannot use classic ANOVA
+# 
+# # Test for differences among genotypes with Welch's ANOVA
+# (welch <- oneway.test(ed50_adj ~ geno, data = multi.adj.r, var.equal = F))
+# ## Significant effect of genotype. Interpretation: ED50 value has a strong genetic component, and thermal tolerance phenotypes for a genet are reproducible even when genet moved to new environment.
+# 
+# # Estimate variance explained by genotype
+# omega.squared <- function(WelchF, df, N) df * (WelchF - 1) / (df * (WelchF - 1) + N)
+# omega.squared(WelchF = welch$statistic[[1]], df = welch$parameter[[1]], N = nrow(multi.adj))
+# ## Genotype explains 49% of variance in ED50 measured across nurseries. Residual variance may be due to genotype by environment interactions (e.g., differential acclimatization of genotypes to different nursery environments), or CBASS run variability & measurement error.
+# anova(lm(ed50_adj ~ geno, data = multi.adj.r))
+# 
+# 
+# 
+# 
+# # Use unadjusted data?
+# # Get ED50s (adjusted for nursery effect) for genotypes present at multiple nurseries
+# multi <- res %>%
+#   # Filter genotypes present at more than one nursery
+#   group_by(geno) %>%
+#   filter(n_distinct(nursery) > 1) %>%
+#   # If genotype run more than once at a nursery, use mean ed50 within nursery
+#   group_by(geno, nursery) %>%
+#   summarize(ed50 = mean(estimate_ed50)) %>%
+#   ungroup()
+# # Reorder genotypes based on mean ed50 across nurseries
+# multi <- multi %>%
+#   group_by(geno) %>%
+#   summarize(geno_mean_ed50 = mean(ed50)) %>%
+#   right_join(multi) %>%
+#   mutate(geno = fct_reorder(geno, geno_mean_ed50))
+# 
+# mod <- lm(ed50 ~ nursery + geno, data =  multi)
+# anova(mod)
+# car::Anova(mod, type = 3, white.adjust = TRUE)
+# oneway.test(ed50 ~ geno, data = mutate(multi, ed50 = sample(ed50)), var.equal = F)
+# 
+# # These tests are really unstable with randomized data, don't think results are reliable. Sample sizes for each geno are so small.
 ```
 
-# Is thermal tolerance related to source colony latitude and longitude?
-```{r, eval = FALSE, fig.width = 10}
-mod <- lm(ed50_adj ~ source_lat + source_lon, data = res.adj)
+Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 30 genotypes in this subset were present at only two (n=17) or three nurseries (n=13), so the low replication for each genotype is definitely a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
+
+
+```{r, include = FALSE, eval = FALSE}
+# Is thermal tolerance related to symbiont density?
+
+sh <- read_csv("data/processed/acer_SH_data.csv") %>%
+  clean_names() %>%
+  filter(species == "Acer") %>%
+  mutate(nursery = tolower(nursery)) %>%
+  rename(name = genotype) %>%
+  left_join(res.adj, sh, by = c("nursery", "name")) %>%
+  mutate(a_acer = replace_na(a_acer, 0),
+         d_acer = replace_na(d_acer, 0),
+         totSH = a_acer + d_acer,
+         logSH = log10(totSH)) %>%
+  filter(nursery != "rrt")
+
+ggplot(sh, aes(x = logSH, y = estimate_ed50)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+
+ggplot(sh, aes(x = logSH, y = estimate_ed50, color = nursery)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+
+mod <- lm(estimate_ed50 ~ logSH * nursery, data = sh)
 anova(mod)
+plot(emtrends(mod, specs = "nursery", var = "logSH"))
+```
+
+
+# Is thermal tolerance related to source colony latitude and longitude?
+```{r}
+mod <- lm(ed50_adj ~ source_lat + source_lon, data = res.adj)
+anova(mod) %>%
+  tidy() %>%
+  knitr::kable()
 
 lat.plot <- ggplot(res.adj, aes(x = source_lat, y = ed50_adj)) +
   geom_point(size = 0.75) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
-  labs(x = "Latitude", y = "Adjusted ED50 (°C)")
+  theme(axis.text = element_text(size = 7)) +
+  labs(x = "Latitude", y = expression(paste(ED50[adj], " (°C)")))
+lat.plot
 
 lon.plot <- ggplot(res.adj, aes(x = source_lon, y = ed50_adj)) +
   geom_point(size = 0.75) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
+  theme(axis.text = element_text(size = 7)) +
   labs(x = "Longitude", y = NULL)
+lon.plot
 ```
 
 # Is thermal tolerance related to source colony temperature regime?
+
+To test this hypothesis, we calculate maximum monthly mean (MMM) temperatures corresponding to each source colony location, using satellite SST products with both 9km and 5km resolution. 
+
 ```{r, eval = TRUE}
 # Import 9km SST data
 sst9 <- tibble(
@@ -292,39 +495,194 @@ sst9 <- sst9 %>%
   mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
   mutate(monthly_means = map(data, ~ group_by(., month) %>% summarize(mean = mean(temp))),
          mmm_9km = map_dbl(monthly_means, ~ max(.$mean)),
+         minmm = map_dbl(monthly_means, ~ min(.$mean)),
+         totvar = map_dbl(data, ~ var(.$temp)),
          sumvar = map_dbl(data, ~ filter(.,  month %in% c("07", "08", "09")) %>% 
                             summarize(var = var(temp)) %>% pull(var)))
 
 # Join with results and sample metadata
 dft <- sst9 %>%
-  distinct(source_lat = lat, source_lon = lon, mmm_9km, sumvar) %>%
+  distinct(source_lat = lat, source_lon = lon, mmm_9km, minmm, totvar, sumvar) %>%
   right_join(res.adj) %>%
   mutate(mmm_5km = as.numeric(mmm_5km))
 
 # Test effect of MMM from 9km data
 mod9km <- lm(ed50_adj ~ mmm_9km, data = dft)
-anova(mod9km)
+anova(mod9km) %>%
+  tidy() %>%
+  knitr::kable()
 
 # Test effect of MMM from 5km data
 mod5km <- lm(ed50_adj ~ mmm_5km, data = dft)
-anova(mod5km)
+anova(mod5km) %>%
+  tidy() %>%
+  knitr::kable()
 
 # Plots
 mmm9.plot <- ggplot(dft, aes(x = mmm_9km, y = ed50_adj)) +
   geom_point(size = 0.75) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
-  labs(x = "MMM (9km)", y = NULL)
+  theme(axis.text = element_text(size = 7)) +
+  scale_x_continuous(labels = function(x) str_trim(x)) +
+  labs(x = "MMM (9 km)", y = NULL)
 
 mmm5.plot <- ggplot(dft, aes(x = mmm_5km, y = ed50_adj)) +
   geom_point(size = 0.75) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
-  labs(x = "MMM (5km)", y = NULL)
+  theme(axis.text = element_text(size = 7)) +
+  scale_x_continuous(labels = function(x) str_trim(x)) +
+  labs(x = "MMM (5 km)", y = NULL)
 ```
 
-# Plot (lack of) relationship between ED50 and lat/lon/mmm
-```{r}
+```{r, fig.width = 11, fig.height = 3}
 cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
-                   rel_widths = c(1.07,1,1,1))
+                   rel_widths = c(1.07,1,1,1), labels = "AUTO")
+ggsave("output/fig5.png", width = 190, height = 50, units = "mm")
 ```
+
+```{r}
+mod <- lm(ed50_adj ~ source_lat * source_lon * mmm_9km * mmm_5km, data = dft)
+anova(mod) %>%
+  tidy() %>%
+  knitr::kable()
+```
+
+There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This is a pretty cool finding because it suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
+
+```{r}
+# Relationship between nursery MMM and average nursery ED50?
+dft %>%
+  group_by(nursery) %>%
+  summarize(meaned50 = mean(estimate_ed50)) %>%
+  mutate(nursmmm = case_when(nursery == "mote" ~ 30.2694,
+                             nursery == "um"  ~ 29.5412,
+                             nursery == "nsu" ~ 29.5344,
+                             nursery == "crf" ~ 29.7307,
+                             nursery == "rrt" ~ 29.7307,
+                             nursery == "fwc" ~ 29.9965)) %>%
+  ggplot(aes(x = nursmmm, y = meaned50)) +
+  geom_label(aes(label = nursery)) +
+  geom_smooth(method = "lm")
+```
+
+
+```{r, eval = FALSE, include = FALSE}
+top10 <- res.adj %>%
+  filter(ed50_adj > quantile(ed50_adj, 0.9))
+bot10 <- res.adj %>%
+  filter(ed50_adj < quantile(ed50_adj, 0.1))
+
+
+ggplot(res.adj, aes(x = source_lon, y = source_lat)) + 
+  geom_point(size = 0.25, color = "gray") +
+  geom_point(data = top10, color = "red", size = 2, alpha = 0.5) +
+  #geom_point(data = bot10, color = "royalblue", size = 2, alpha = 0.5) +
+  theme_few()
+
+ggmap(map_fl, extent = "device") +
+  geom_point(aes(x = source_lon, y = source_lat), data = res.adj, size = 0.25, color = "gray") +
+  geom_point(aes(x = source_lon, y = source_lat), data = top10, color = "red", size = 2, alpha = 0.5)
+
+top10
+
+library(maps)
+library(sf) 
+library(units)
+library(rnaturalearth)
+dd <- st_as_sf(top10, coords = c("source_lon", "source_lat"), crs = 4326)
+st_distance(dd)
+
+top10 %>%
+  count(nursery)
+bot10 %>%
+  count(nursery)
+
+res.adj %>% anti_join(top20) %>% anti_join(bot20) %>%
+  count(nursery)
+
+res.adj %>%
+  filter(nursery == "fwc") %>%
+  inner_join(top20)
+```
+
+```{r, eval = FALSE, include = FALSE}
+ggplot(res.adj, aes(x = ed50_adj, y = estimate_hill, color = nursery)) + geom_point() +
+  geom_label(aes(label = geno))
+  
+```
+
+
+
+# Compare October to June CBASS results
+
+27 of the genotypes we tested on the October cruise were also tested in June 2020 by Kelsey Johnson-Sapp at RSMAS in an independent set of CBASS assays (this occurred at the time of the genotype swap). We can compare the ED50 values obtained for these 27 genotypes in June and October to see how reproducible the results are.
+
+```{r}
+# Filter data for corals run in October and June
+df2 <- df.all %>%
+  drop_na(date) %>%
+  group_by(nursery, geno) %>%
+  filter(n_distinct(date) == 2) %>%
+  ungroup() %>%
+  select(nursery, name, geno, date, max_temp, fvfm)
+
+# Fit dose-response curves for each genotype on each date
+df2$genoN <- factor(paste0("g", group_indices(df2, nursery, geno, date)))
+mod2 <- drm(fvfm ~ max_temp, curveid = genoN, data = df2, 
+           fct = LL.3(names = c("hill", "max", "ED50")),
+           upperl = c(120, 0.72, 40),
+           lowerl = c(10, 0.55, 30))
+
+# Extract ED50 estimates and standard error
+ed50s <- tidy(mod2) %>%
+  filter(term == "ED50") %>%
+  select(genoN = curve, estimate, std.error) %>%
+  left_join(distinct(df2, nursery, geno, date, genoN))
+
+# Rearrange data to compare ED50 values between dates
+ed50s2 <- ed50s %>% 
+  mutate(date = recode(date, "2020-10" = "oct", "2020-06" = "jun")) %>%
+  select(nursery, geno, date, ed50 = estimate, std.error) %>%
+  pivot_wider(names_from = date, values_from = c(ed50, std.error)) %>%
+  filter(geno != "FM19")
+
+# Plot figure
+fig <- ggplot(ed50s2, aes(y = ed50_oct, x = ed50_jun)) +
+  geom_errorbar(aes(xmin = ed50_jun - std.error_jun,
+                    xmax = ed50_jun + std.error_jun), lwd = 0.15) +
+  geom_errorbar(aes(ymin = ed50_oct - std.error_oct,
+                    ymax = ed50_oct + std.error_oct), lwd = 0.15) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  #geom_label(aes(label = geno), alpha = 0.7, size = 2) +
+  annotate(geom = "text", x = 34.8, y = 36.5, 
+           label = "Pearson's correlation:", adj = 0, size = 2) +
+  stat_cor(method = "pearson", label.y = 36.45, label.x = 34.85, size = 2) +
+  annotate(geom = "text", x = 34.8, y = 36.375, 
+           label = "Spearman's rank correlation:", adj = 0, size = 2) +
+  stat_cor(method = "spearman", label.y = 36.325, label.x = 34.85, size = 2) +
+  geom_abline(intercept = 0, slope = 1, lty = 2, color = "black") +
+  coord_fixed()  +
+  labs(x = "ED50 (°C) measured in June", y = "ED50 (°C) measured in Oct.") +
+  theme_few()
+fig
+
+ggsave("output/fig6.png", width = 90, height = 99, units = "mm")
+
+# Linear regression
+mod <- lm(ed50_oct ~ ed50_jun, data = ed50s2)
+## Slope of fit
+tibble(slope = coef(mod)[2]) %>% knitr::kable()
+## Test if slope is different than 1
+car::linearHypothesis(mod, "ed50_jun = 1")
+## Find mean difference between Oct and Jun values
+augment(mod) %>%
+  mutate(diff = ed50_oct - ed50_jun) %>%
+  summarize("Mean difference Oct. - Jun" = mean(diff)) %>%
+  knitr::kable()
+```
+
+There is a high correlation between ED50 values obtained from the same coral genets (from the same nurseries) run in both June and October (n = 27 genets). This suggests that ED50 values from independently run CBASS assays are relatively reproducible for a given genotype. The shift in y-intercept could be due to seasonal differences, or experimental differences, in October vs. June. Overall, this high reproducibility is very encouraging for the continued use of the CBASS approach for thermal tolerance phenotyping.
+
