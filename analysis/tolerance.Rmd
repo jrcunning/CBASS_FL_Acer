@@ -607,10 +607,87 @@ res.adj %>%
   inner_join(top20)
 ```
 
-```{r, eval = FALSE, include = FALSE}
-ggplot(res.adj, aes(x = ed50_adj, y = estimate_hill, color = nursery)) + geom_point() +
-  geom_label(aes(label = geno))
-  
+```{r}
+# ED50 rarefaction curves from each nursery
+adjed50dist <- rnorm(100000, meanadj, sdadj)
+deciles <- quantile(adjed50dist, probs = seq(0, 1, 0.1))
+
+sample_ed50s <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  prop_deciles <- length(unique(cut(s, deciles))) / 10
+  return(prop_deciles)
+}
+
+rc <- res.adj %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
+  crossing(n = 1:25) %>%
+  mutate(prop = map2(data, n, ~ replicate(1000, sample_ed50s(.x$ed50_adj, .y))),
+         mean = map_dbl(prop, mean))
+
+rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7),
+        legend.position = "none") +
+  labs(x = "Genets sampled", y = "Proportion of ED50 range\nin sample")
+
+
+
+# Prob of any genos in top 25% of population
+top25 <- quantile(adjed50dist, prob = 0.75)
+
+sample_ed50s2 <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  any_top25 <- any(s >= top25)
+  return(any_top25)
+}
+
+rc2 <- res.adj %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
+  crossing(n = 1:25) %>%
+  mutate(ntop25 = map2(data, n, ~ replicate(10000, sample_ed50s2(.x$ed50_adj, .y))),
+         mean = map_dbl(ntop25, mean))
+
+rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7),
+        legend.position = c(0.8, 0.4)) +
+  labs(x = "Genets sampled", y = "Probability sample includes\ntop quartile ED50")
+
+cowplot::plot_grid(rc1fig, rc2fig, ncol = 2)
+
+
+
+# mean ED50 percentile of most tolerant genet in sample?
+percentile <- ecdf(adjed50dist)
+sample_ed50s3 <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  topgenet <- percentile(max(s))
+  return(topgenet)
+}
+
+rc3 <- res.adj %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
+  crossing(n = 1:25) %>%
+  mutate(topgenet = map2(data, n, ~ replicate(100, sample_ed50s3(.x$ed50_adj, .y))),
+         mean = map_dbl(topgenet, mean))
+
+rc3fig <- ggplot(rc3, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7),
+        legend.position = c(0.8, 0.4)) +
+  labs(x = "Genets sampled", y = "ED50 percentile\nof most tolerant genet")
 ```
 
 
