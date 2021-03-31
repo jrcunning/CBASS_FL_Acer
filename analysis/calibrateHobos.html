@@ -372,6 +372,86 @@ summary {
 <div id="calibrate-hobos-from-csv" class="section level2">
 <h2>Calibrate HOBOs from CSV</h2>
 <p>Test was run from 11/4/2020 14:45 to 11/5/2020 12:30. One cooler was used with two tank replicates and 6 hobos in each. Tanks are named left and right.</p>
+<pre class="r"><code># Average the arduino log to 1-minute intervals
+arduinoLog &lt;- arduinoLog %&gt;%
+  group_by(roundDate, Tank, Probe) %&gt;%
+  summarise(setPoint = mean(setPoint), Temp = mean(Temp)) %&gt;%
+  ungroup()</code></pre>
+<pre><code>## `summarise()` regrouping output by &#39;roundDate&#39;, &#39;Tank&#39; (override with `.groups` argument)</code></pre>
+<pre class="r"><code># Get just the setpoints
+setPoints &lt;- arduinoLog %&gt;% 
+  ungroup() %&gt;%
+  distinct(roundDate, setPoint)
+
+# Get all the minutes when set point stayed constant, minus the first 20 minutes of reaching that set point
+stableTimes &lt;- setPoints %&gt;% 
+  mutate(interval = with(rle(setPoints$setPoint), { rep(seq_along(lengths), lengths) })) %&gt;%
+  group_by(interval) %&gt;%
+  nest(data = c(roundDate, setPoint)) %&gt;%
+  mutate(data.f = map(data, ~ tail(., -20))) %&gt;%
+  unnest(data.f) %&gt;%
+  ungroup() %&gt;%
+  select(roundDate, interval)
+
+# Filter Arduino log data to include only stableTimes
+arduinoLog.f &lt;- arduinoLog %&gt;%
+  select(roundDate, Tank, Probe, setPoint, Temp) %&gt;%
+  right_join(stableTimes)</code></pre>
+<pre><code>## Joining, by = &quot;roundDate&quot;</code></pre>
+<pre class="r"><code># Filter Hobo data to include only stableTimes
+allHobo.f &lt;- allHobo %&gt;%
+  select(roundDate, Tank, shortSN, Temp) %&gt;%
+  right_join(stableTimes)</code></pre>
+<pre><code>## Joining, by = &quot;roundDate&quot;</code></pre>
+<pre class="r"><code># Combine all data from left tank
+arduinoLog.f.left &lt;- arduinoLog.f %&gt;%
+  filter(Tank == &quot;Left&quot;) %&gt;%
+  pivot_wider(names_from = Probe, values_from = Temp, names_prefix = &quot;Probe_&quot;)
+allHobo.f.left &lt;- allHobo.f %&gt;%
+  filter(Tank == &quot;Left&quot;) %&gt;%
+  pivot_wider(names_from = shortSN, values_from = Temp, names_prefix = &quot;Hobo_&quot;)
+left &lt;- full_join(arduinoLog.f.left, allHobo.f.left)</code></pre>
+<pre><code>## Joining, by = c(&quot;roundDate&quot;, &quot;Tank&quot;, &quot;interval&quot;)</code></pre>
+<pre class="r"><code>leftmeans &lt;- left %&gt;% 
+  group_by(interval) %&gt;%
+  summarise(across(starts_with(c(&quot;setPoint&quot;, &quot;Probe&quot;, &quot;Hobo&quot;)), mean))</code></pre>
+<pre><code>## `summarise()` ungrouping output (override with `.groups` argument)</code></pre>
+<pre class="r"><code>leftres &lt;- leftmeans %&gt;%
+  mutate(across(starts_with(&quot;Hobo&quot;), ~ . - Probe_2)) %&gt;%
+  filter(setPoint &gt;= 30, setPoint &lt;= 34)
+
+# Combine all data from right tank
+arduinoLog.f.right &lt;- arduinoLog.f %&gt;%
+  filter(Tank == &quot;Right&quot;) %&gt;%
+  pivot_wider(names_from = Probe, values_from = Temp, names_prefix = &quot;Probe_&quot;)
+allHobo.f.right &lt;- allHobo.f %&gt;%
+  filter(Tank == &quot;Right&quot;) %&gt;%
+  pivot_wider(names_from = shortSN, values_from = Temp, names_prefix = &quot;Hobo_&quot;)
+right &lt;- full_join(arduinoLog.f.right, allHobo.f.right)</code></pre>
+<pre><code>## Joining, by = c(&quot;roundDate&quot;, &quot;Tank&quot;, &quot;interval&quot;)</code></pre>
+<pre class="r"><code>rightmeans &lt;- right %&gt;% 
+  group_by(interval) %&gt;%
+  summarise(across(starts_with(c(&quot;setPoint&quot;, &quot;Probe&quot;, &quot;Hobo&quot;)), mean))</code></pre>
+<pre><code>## `summarise()` ungrouping output (override with `.groups` argument)</code></pre>
+<pre class="r"><code>rightres &lt;- rightmeans %&gt;%
+  mutate(across(starts_with(&quot;Hobo&quot;), ~ . - Probe_1)) %&gt;%
+  filter(setPoint &gt;= 30, setPoint &lt;= 34)
+
+res &lt;- full_join(leftres, rightres) %&gt;%
+  select(setPoint, starts_with(&quot;Hobo&quot;)) %&gt;% 
+  pivot_longer(starts_with(&quot;Hobo&quot;), names_to = &quot;hobo&quot;,  values_to = &quot;offset&quot;)</code></pre>
+<pre><code>## Joining, by = c(&quot;interval&quot;, &quot;setPoint&quot;)</code></pre>
+<pre class="r"><code>final_res &lt;- res %&gt;%
+  group_by(hobo) %&gt;%
+  summarise(mean_offset = mean(offset)) %&gt;%
+  mutate(tank_id = recode(hobo, 
+                          &quot;Hobo_3461&quot; = &quot;P5&quot;, &quot;Hobo_0765&quot; = &quot;P6&quot;,
+                          &quot;Hobo_0766&quot; = &quot;P7&quot;, &quot;Hobo_0764&quot; = &quot;P8&quot;,
+                          &quot;Hobo_5040&quot; = &quot;S5&quot;, &quot;Hobo_3463&quot; = &quot;S6&quot;,
+                          &quot;Hobo_3462&quot; = &quot;S7&quot;, &quot;Hobo_4982&quot; = &quot;S8&quot;)) %&gt;%
+  filter(hobo != tank_id)</code></pre>
+<pre><code>## `summarise()` ungrouping output (override with `.groups` argument)</code></pre>
+<pre class="r"><code>final_res</code></pre>
 <pre><code>## # A tibble: 8 x 3
 ##   hobo      mean_offset tank_id
 ##   &lt;chr&gt;           &lt;dbl&gt; &lt;chr&gt;  
@@ -383,6 +463,7 @@ summary {
 ## 6 Hobo_3463       0.353 S6     
 ## 7 Hobo_4982       0.335 S8     
 ## 8 Hobo_5040       0.251 S5</code></pre>
+<pre class="r"><code>write_csv(final_res, &quot;data/processed/hobo_calibrations.csv&quot;)</code></pre>
 </div>
 
 
