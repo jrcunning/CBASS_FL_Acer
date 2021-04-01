@@ -183,19 +183,6 @@ ggsave("output/fig3.png", width = 172, height = 75, units = "mm")
 
 After adjusting for variation due to nursery location (i.e., environment), ED50 values are approximately normally distributed, with a mean of 35.98°C and standard deviation of 0.38°C. This is the variance due to genetic effects (and measurement error).
 
-```{r}
-
-
-n <- 100000
-lo <- 0.1 / 100
-hi <- 99.9 / 100
-lohi <- qnorm(c(lo, hi), meanadj, sdadj)
-lohi
-diff(lohi)
-lo * n
-hi * n
-```
-
 # How does thermal tolerance vary across nurseries?
 
 ```{r nursery_effects, fig.width = 5}
@@ -219,7 +206,9 @@ nurs.stats <- res %>%
   ungroup()
 
 # Median pairwise difference between nurseries
-(mpwdiff <- median(dist(nurs.stats$mean)))
+mpwdiff <- median(dist(nurs.stats$mean))
+mpwdiff %>%
+  knitr::kable(caption = "Median pairwise difference between nurseries (°C)")
 
 # Use pairwise wilcox to test for differences in ED50 among nurseries
 test <- pairwise.wilcox.test(res$estimate_ed50, res$nursery, p.adjust.method = "bonf")
@@ -260,20 +249,6 @@ ggsave("output/fig4.png", width = 120, height = 100, units = "mm")
 ```
 
 There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different set of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
-
-```{r}
-# Amount of variance within nurseries relative to population variance
-nursvar <- res.adj %>%
-  group_by(nursery) %>%
-  summarise(svar = sum((ed50_adj - mean(ed50_adj))^2) / n(),
-            var = var(ed50_adj)) %>%
-  ungroup()
-
-totvar <- var(res$estimate_ed50)
-
-nursvar %>%
-  mutate(relvar = var / totvar)
-```
 
 
 # How does thermal tolerance vary for the same genotype grown at different nurseries?
@@ -334,27 +309,31 @@ ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, 
   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
 
 tidy(anova(lm(ed50_adj ~ geno, data = multi.adj))) %>%
-  knitr::kable()
+  knitr::kable(caption = "ANOVA: Effect of genotype on ED50")
 
 library(GGally)
-multi.adj %>%
+cors <- multi.adj %>%
   select(nursery, geno, ed50_adj) %>%
   pivot_wider(names_from = nursery, values_from = ed50_adj, values_fn = mean) %>%
-  select(-geno) %>%
-  ggpairs()
+  select(-geno)
 
-library(RVenn)
-overlap <- res.adj %>%
-  distinct(nursery, geno) %>%
-  {split(.$geno, .$nursery)} %>%
-  Venn(.) %>%
-  overlap_pairs(.) %>%
-  map(length) %>%
-  unlist()
-overlap
-hist(overlap)
-mean(overlap)
-median(overlap[overlap > 0])
+ggpairs(cors, title = "Correlation of ED50 values for same genotype at multiple nurseries")
+
+corfig <- ggpairs(cors)
+ggsave(plot = corfig, filename = "output/figsss.png", width = 190, height = 190, units = "mm")
+
+# library(RVenn)
+# overlap <- res.adj %>%
+#   distinct(nursery, geno) %>%
+#   {split(.$geno, .$nursery)} %>%
+#   Venn(.) %>%
+#   overlap_pairs(.) %>%
+#   map(length) %>%
+#   unlist()
+# overlap
+# hist(overlap)
+# mean(overlap)
+# median(overlap[overlap > 0])
 
 #ggsave("output/fig5.png", width = 90, height = 75, units = "mm")
 
@@ -465,7 +444,6 @@ lat.plot <- ggplot(res.adj, aes(x = source_lat, y = ed50_adj)) +
   theme_few() +
   theme(axis.text = element_text(size = 7)) +
   labs(x = "Latitude", y = expression(paste(ED50[adj], " (°C)")))
-lat.plot
 
 lon.plot <- ggplot(res.adj, aes(x = source_lon, y = ed50_adj)) +
   geom_point(size = 0.75) +
@@ -473,7 +451,8 @@ lon.plot <- ggplot(res.adj, aes(x = source_lon, y = ed50_adj)) +
   theme_few() +
   theme(axis.text = element_text(size = 7)) +
   labs(x = "Longitude", y = NULL)
-lon.plot
+
+cowplot::plot_grid(lat.plot, lon.plot, ncol = 2)
 ```
 
 # Is thermal tolerance related to source colony temperature regime?
@@ -534,12 +513,14 @@ mmm5.plot <- ggplot(dft, aes(x = mmm_5km, y = ed50_adj)) +
   theme(axis.text = element_text(size = 7)) +
   scale_x_continuous(labels = function(x) str_trim(x)) +
   labs(x = "MMM (5 km)", y = NULL)
+
+cowplot::plot_grid(mmm9.plot, mmm5.plot, ncol = 2)
 ```
 
 ```{r, fig.width = 11, fig.height = 3}
-cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
+fig5 <- cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
                    rel_widths = c(1.07,1,1,1), labels = "AUTO")
-ggsave("output/fig5.png", width = 190, height = 50, units = "mm")
+ggsave(plot = fig5, filename = "output/fig5.png", width = 190, height = 50, units = "mm")
 ```
 
 ```{r}
@@ -551,9 +532,10 @@ anova(mod) %>%
 
 There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This is a pretty cool finding because it suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
 
+# Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
 ```{r}
 # Relationship between nursery MMM and average nursery ED50?
-dft %>%
+nursmmm <- dft %>%
   group_by(nursery) %>%
   summarize(meaned50 = mean(estimate_ed50)) %>%
   mutate(nursmmm = case_when(nursery == "mote" ~ 30.2694,
@@ -561,10 +543,11 @@ dft %>%
                              nursery == "nsu" ~ 29.5344,
                              nursery == "crf" ~ 29.7307,
                              nursery == "rrt" ~ 29.7307,
-                             nursery == "fwc" ~ 29.9965)) %>%
+                             nursery == "fwc" ~ 29.9965)) 
+
+nursmmm %>%
   ggplot(aes(x = nursmmm, y = meaned50)) +
-  geom_label(aes(label = nursery)) +
-  geom_smooth(method = "lm")
+  geom_label(aes(label = nursery))
 ```
 
 
@@ -606,90 +589,6 @@ res.adj %>%
   filter(nursery == "fwc") %>%
   inner_join(top20)
 ```
-
-```{r}
-# ED50 rarefaction curves from each nursery
-adjed50dist <- rnorm(100000, meanadj, sdadj)
-deciles <- quantile(adjed50dist, probs = seq(0, 1, 0.1))
-
-sample_ed50s <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  prop_deciles <- length(unique(cut(s, deciles))) / 10
-  return(prop_deciles)
-}
-
-rc <- res.adj %>%
-  select(nursery, ed50_adj) %>%
-  nest(data = ed50_adj) %>%
-  crossing(n = 1:25) %>%
-  mutate(prop = map2(data, n, ~ replicate(1000, sample_ed50s(.x$ed50_adj, .y))),
-         mean = map_dbl(prop, mean))
-
-rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(axis.text = element_text(size = 7),
-        legend.position = "none") +
-  labs(x = "Genets sampled", y = "Proportion of ED50 range\nin sample")
-
-
-
-# Prob of any genos in top 25% of population
-top25 <- quantile(adjed50dist, prob = 0.75)
-
-sample_ed50s2 <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  any_top25 <- any(s >= top25)
-  return(any_top25)
-}
-
-rc2 <- res.adj %>%
-  select(nursery, ed50_adj) %>%
-  nest(data = ed50_adj) %>%
-  crossing(n = 1:25) %>%
-  mutate(ntop25 = map2(data, n, ~ replicate(10000, sample_ed50s2(.x$ed50_adj, .y))),
-         mean = map_dbl(ntop25, mean))
-
-rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(axis.text = element_text(size = 7),
-        legend.position = c(0.8, 0.4)) +
-  labs(x = "Genets sampled", y = "Probability sample includes\ntop quartile ED50")
-
-cowplot::plot_grid(rc1fig, rc2fig, ncol = 2)
-
-
-
-# mean ED50 percentile of most tolerant genet in sample?
-percentile <- ecdf(adjed50dist)
-sample_ed50s3 <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  topgenet <- percentile(max(s))
-  return(topgenet)
-}
-
-rc3 <- res.adj %>%
-  select(nursery, ed50_adj) %>%
-  nest(data = ed50_adj) %>%
-  crossing(n = 1:25) %>%
-  mutate(topgenet = map2(data, n, ~ replicate(100, sample_ed50s3(.x$ed50_adj, .y))),
-         mean = map_dbl(topgenet, mean))
-
-rc3fig <- ggplot(rc3, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(axis.text = element_text(size = 7),
-        legend.position = c(0.8, 0.4)) +
-  labs(x = "Genets sampled", y = "ED50 percentile\nof most tolerant genet")
-```
-
 
 
 # Compare October to June CBASS results
@@ -746,7 +645,7 @@ fig <- ggplot(ed50s2, aes(y = ed50_oct, x = ed50_jun)) +
   theme_few()
 fig
 
-ggsave("output/fig6.png", width = 90, height = 99, units = "mm")
+ggsave("output/fig7.png", width = 90, height = 99, units = "mm")
 
 # Linear regression
 mod <- lm(ed50_oct ~ ed50_jun, data = ed50s2)
@@ -762,4 +661,85 @@ augment(mod) %>%
 ```
 
 There is a high correlation between ED50 values obtained from the same coral genets (from the same nurseries) run in both June and October (n = 27 genets). This suggests that ED50 values from independently run CBASS assays are relatively reproducible for a given genotype. The shift in y-intercept could be due to seasonal differences, or experimental differences, in October vs. June. Overall, this high reproducibility is very encouraging for the continued use of the CBASS approach for thermal tolerance phenotyping.
+
+# Thermal tolerance phenotype rarefaction curves
+```{r}
+# ED50 rarefaction curves from each nursery
+adjed50dist <- rnorm(100000, meanadj, sdadj)
+deciles <- quantile(adjed50dist, probs = seq(0, 1, 0.1))
+
+sample_ed50s <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  prop_deciles <- length(unique(cut(s, deciles))) / 10
+  return(prop_deciles)
+}
+
+rc <- res.adj %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
+  crossing(n = 1:25) %>%
+  mutate(prop = map2(data, n, ~ replicate(1000, sample_ed50s(.x$ed50_adj, .y))),
+         mean = map_dbl(prop, mean))
+
+rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7),
+        legend.position = "none") +
+  labs(x = "Genets sampled", y = "Proportion of ED50 range\nin sample")
+
+
+
+# Prob of any genos in top 25% of population
+sample_ed50s2 <- function(ed50s, n) {
+  top25 <- quantile(rnorm(100000, mean(ed50s), sd(ed50s)), prob = 0.75)
+  s <- sample(ed50s, n)
+  any_top25 <- any(s >= top25)
+  return(any_top25)
+}
+
+rc2 <- res.adj %>%
+  #mutate(ed50_adj = rnorm(n = 229, mean = 35.98, sd = 10)) %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
+  crossing(n = 1:25) %>%
+  mutate(ntop25 = map2(data, n, ~ replicate(100, sample_ed50s2(.x$ed50_adj, .y))),
+         mean = map_dbl(ntop25, mean))
+
+rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7),
+        legend.position = c(0.8, 0.4)) +
+  labs(x = "Genets sampled", y = "Probability sample includes\ntop quartile ED50")
+
+fig7 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
+ggsave("output/fig6.png", width = 172, height = 75, units = "mm")
+```
+
+
+```{r, include = FALSE, eval = FALSE}
+myd <- rnorm(n = 1000000, mean = 10, sd = 0.1)
+myq <- quantile(rnorm(1000000, mean(myd), sd(myd)), prob = 0.75)
+myq
+
+sample_ed50s2 <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  any_top25 <- any(s >= myq)
+  return(any_top25)
+}
+
+
+tibble(n = 1:20) %>%
+  mutate(ntop25 = map(n, ~ replicate(1000, sample_ed50s2(myd, .x))),
+         mean = map_dbl(ntop25, mean))
+
+test <- c("a", "b", "c", "d")
+draw7 <- replicate(100000, any(sample(test, 8, replace = TRUE) == "d"))
+table(draw7)
+```
 
