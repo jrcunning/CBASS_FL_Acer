@@ -1,5 +1,5 @@
 ---
-title: "CBASS 2020: Thermal tolerance of *A. cervicornis* across 6 Florida coral nurseries"
+title: "Thermal tolerance of *A. cervicornis* across 6 Florida coral nurseries"
 author: Ross Cunning
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
@@ -268,33 +268,6 @@ multi.adj <- multi.adj %>%
   summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
   right_join(multi.adj) %>%
   mutate(geno = fct_reorder(geno, geno_mean_ed50))
-
-# multi.adj %>%
-#   count(geno, name = "n_nurs") %>%
-#   count(n_nurs, name = "n_geno")
-
-# multi <- res %>%
-#   group_by(geno) %>%
-#   filter(n_distinct(nursery) > 1) %>%
-#   # If genotype run more than once at a nursery, use mean ed50 within nursery
-#   group_by(geno, nursery) %>%
-#   summarize(estimate_ed50 = mean(estimate_ed50)) %>%
-#   ungroup()
-# 
-# # Adjust for nursery differences
-# multi.adj <- multi %>%
-#   group_by(nursery) %>%
-#   summarise(nurs_mean = mean(estimate_ed50)) %>%
-#   ungroup() %>%
-#   right_join(multi) %>%
-#   mutate(.resid = estimate_ed50 - nurs_mean,
-#          ed50_adj = mean(estimate_ed50) + .resid)
-# multi.adj <- multi.adj %>%
-#   # Reorder genotypes based on mean ed50 across nurseries
-#   group_by(geno) %>%
-#   summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
-#   right_join(multi.adj) %>%
-#   mutate(geno = fct_reorder(geno, geno_mean_ed50))
   
 
 # Plot ED50adj by genotype
@@ -308,6 +281,8 @@ ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, 
         legend.position = c(0.1, 0.8)) +
   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
 
+ggsave(filename = "output/figS2.png", width = 87, height = 87, units = "mm")
+
 tidy(anova(lm(ed50_adj ~ geno, data = multi.adj))) %>%
   knitr::kable(caption = "ANOVA: Effect of genotype on ED50")
 
@@ -320,83 +295,7 @@ cors <- multi.adj %>%
 ggpairs(cors, title = "Correlation of ED50 values for same genotype at multiple nurseries")
 
 corfig <- ggpairs(cors)
-ggsave(plot = corfig, filename = "output/figS2.png", width = 190, height = 190, units = "mm")
-
-# library(RVenn)
-# overlap <- res.adj %>%
-#   distinct(nursery, geno) %>%
-#   {split(.$geno, .$nursery)} %>%
-#   Venn(.) %>%
-#   overlap_pairs(.) %>%
-#   map(length) %>%
-#   unlist()
-# overlap
-# hist(overlap)
-# mean(overlap)
-# median(overlap[overlap > 0])
-
-#ggsave("output/fig5.png", width = 90, height = 75, units = "mm")
-
-# # Randomize ed50 values
-# multi.adj.r <- multi.adj %>%
-#   select(-geno_mean_ed50) %>%
-#   mutate(ed50_adj = sample(ed50_adj))
-# multi.adj.r %>%
-#   # Reorder genotypes based on mean ed50 across nurseries
-#   group_by(geno) %>%
-#   summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
-#   right_join(multi.adj.r) %>%
-#   ungroup() %>%
-#   mutate(geno = fct_reorder(geno, geno_mean_ed50)) %>%
-#   ggplot(aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, group = geno)) + 
-#   geom_point(size = 1.5, alpha = 0.75) + 
-#   geom_point(aes(y = geno_mean_ed50), pch = 1, color = "black", stroke = 0.25, size = 2)+
-#   stat_summary(fun.data = mean_se, geom = "errorbar", color = "black", lwd = 0.25, width = 0.25) +
-#   theme_few() +
-#   theme(axis.text.x = element_text(angle = 45, hjust = 1),
-#         axis.text = element_text(size = 8),
-#         legend.position = c(0.1, 0.8)) +
-#   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
-#   
-# # Test for equal variance across genotypes
-# car::leveneTest(ed50_adj ~ geno, data = multi.adj.r)    # p = 0.019 => cannot use classic ANOVA
-# 
-# # Test for differences among genotypes with Welch's ANOVA
-# (welch <- oneway.test(ed50_adj ~ geno, data = multi.adj.r, var.equal = F))
-# ## Significant effect of genotype. Interpretation: ED50 value has a strong genetic component, and thermal tolerance phenotypes for a genet are reproducible even when genet moved to new environment.
-# 
-# # Estimate variance explained by genotype
-# omega.squared <- function(WelchF, df, N) df * (WelchF - 1) / (df * (WelchF - 1) + N)
-# omega.squared(WelchF = welch$statistic[[1]], df = welch$parameter[[1]], N = nrow(multi.adj))
-# ## Genotype explains 49% of variance in ED50 measured across nurseries. Residual variance may be due to genotype by environment interactions (e.g., differential acclimatization of genotypes to different nursery environments), or CBASS run variability & measurement error.
-# anova(lm(ed50_adj ~ geno, data = multi.adj.r))
-# 
-# 
-# 
-# 
-# # Use unadjusted data?
-# # Get ED50s (adjusted for nursery effect) for genotypes present at multiple nurseries
-# multi <- res %>%
-#   # Filter genotypes present at more than one nursery
-#   group_by(geno) %>%
-#   filter(n_distinct(nursery) > 1) %>%
-#   # If genotype run more than once at a nursery, use mean ed50 within nursery
-#   group_by(geno, nursery) %>%
-#   summarize(ed50 = mean(estimate_ed50)) %>%
-#   ungroup()
-# # Reorder genotypes based on mean ed50 across nurseries
-# multi <- multi %>%
-#   group_by(geno) %>%
-#   summarize(geno_mean_ed50 = mean(ed50)) %>%
-#   right_join(multi) %>%
-#   mutate(geno = fct_reorder(geno, geno_mean_ed50))
-# 
-# mod <- lm(ed50 ~ nursery + geno, data =  multi)
-# anova(mod)
-# car::Anova(mod, type = 3, white.adjust = TRUE)
-# oneway.test(ed50 ~ geno, data = mutate(multi, ed50 = sample(ed50)), var.equal = F)
-# 
-# # These tests are really unstable with randomized data, don't think results are reliable. Sample sizes for each geno are so small.
+ggsave(plot = corfig, filename = "output/figS3.png", width = 190, height = 190, units = "mm")
 ```
 
 Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 30 genotypes in this subset were present at only two (n=17) or three nurseries (n=13), so the low replication for each genotype is definitely a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
@@ -533,7 +432,7 @@ anova(mod) %>%
 There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This is a pretty cool finding because it suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
 
 # Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
-```{r}
+```{r, fig.width = 4, fig.height = 4}
 # Relationship between nursery MMM and average nursery ED50?
 nursmmm <- dft %>%
   group_by(nursery) %>%
