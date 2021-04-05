@@ -278,10 +278,12 @@ ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, 
   theme_few() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         axis.text = element_text(size = 8),
-        legend.position = c(0.1, 0.8)) +
+        legend.position = c(0.15, 0.75),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 8)) +
   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
 
-ggsave(filename = "output/figS2.png", width = 87, height = 87, units = "mm")
+ggsave(filename = "output/figS2.png", width = 120, height = 87, units = "mm")
 
 tidy(anova(lm(ed50_adj ~ geno, data = multi.adj))) %>%
   knitr::kable(caption = "ANOVA: Effect of genotype on ED50")
