@@ -165,10 +165,10 @@ hist2 <- ggplot(res.adj, aes(x = ed50_adj)) +
 
 
 # Combine histograms into multi-panel figure
-fig3 <- cowplot::plot_grid(
+fig2 <- cowplot::plot_grid(
   hist1 + xlim(qnorm(c(0.00001, 0.99999), meanadj, sdadj)), 
   hist2, labels = "AUTO")
-fig3
+fig2
 
 # Summarize original distribution
 tidy(summary(res$estimate_ed50)) %>%
@@ -178,7 +178,7 @@ tidy(summary(res$estimate_ed50)) %>%
 tidy(shapiro.test(res.adj$ed50_adj)) %>% 
   knitr::kable(caption = "Normality test for adjusted ED50 values")
 
-ggsave("output/fig3.png", width = 172, height = 75, units = "mm")
+ggsave("output/fig2.png", width = 172, height = 75, units = "mm")
 ```
 
 After adjusting for variation due to nursery location (i.e., environment), ED50 values are approximately normally distributed, with a mean of 35.98°C and standard deviation of 0.38°C. This is the variance due to genetic effects (and measurement error).
@@ -245,7 +245,7 @@ nurs.fig <- ggplot(res, aes(x = nursery, y = estimate_ed50, fill = nursery, grou
   labs(y = "ED50 (°C)", x = "Nursery")
 nurs.fig
 
-ggsave("output/fig4.png", width = 120, height = 100, units = "mm")
+ggsave("output/fig3.png", width = 120, height = 100, units = "mm")
 ```
 
 There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different set of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
@@ -320,7 +320,7 @@ cors <- multi.adj %>%
 ggpairs(cors, title = "Correlation of ED50 values for same genotype at multiple nurseries")
 
 corfig <- ggpairs(cors)
-ggsave(plot = corfig, filename = "output/figsss.png", width = 190, height = 190, units = "mm")
+ggsave(plot = corfig, filename = "output/figS2.png", width = 190, height = 190, units = "mm")
 
 # library(RVenn)
 # overlap <- res.adj %>%
@@ -518,9 +518,9 @@ cowplot::plot_grid(mmm9.plot, mmm5.plot, ncol = 2)
 ```
 
 ```{r, fig.width = 11, fig.height = 3}
-fig5 <- cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
+fig4 <- cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
                    rel_widths = c(1.07,1,1,1), labels = "AUTO")
-ggsave(plot = fig5, filename = "output/fig5.png", width = 190, height = 50, units = "mm")
+ggsave(plot = fig4, filename = "output/fig4.png", width = 190, height = 50, units = "mm")
 ```
 
 ```{r}
@@ -645,9 +645,9 @@ rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
   labs(x = "Genets sampled", 
        y = expression(atop("Probability sample captures", paste("top quartile in population ED50" [adj]))))
 
-fig6 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
-fig6
-ggsave("output/fig6.png", width = 172, height = 75, units = "mm")
+fig5 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
+fig5
+ggsave("output/fig5.png", width = 172, height = 75, units = "mm")
 ```
 
 
@@ -705,7 +705,7 @@ fig <- ggplot(ed50s2, aes(y = ed50_oct, x = ed50_jun)) +
   theme_few()
 fig
 
-ggsave("output/fig7.png", width = 90, height = 99, units = "mm")
+ggsave("output/figS1.png", width = 90, height = 99, units = "mm")
 
 # Linear regression
 mod <- lm(ed50_oct ~ ed50_jun, data = ed50s2)
