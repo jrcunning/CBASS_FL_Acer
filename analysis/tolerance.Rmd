@@ -550,7 +550,7 @@ nursmmm %>%
   geom_label(aes(label = nursery))
 ```
 
-
+# Map the source locations of the most thermally tolerant genets
 ```{r, eval = FALSE, include = FALSE}
 top10 <- res.adj %>%
   filter(ed50_adj > quantile(ed50_adj, 0.9))
@@ -588,6 +588,66 @@ res.adj %>% anti_join(top20) %>% anti_join(bot20) %>%
 res.adj %>%
   filter(nursery == "fwc") %>%
   inner_join(top20)
+```
+
+
+# Thermal tolerance phenotype rarefaction curves
+```{r}
+# ED50 rarefaction curves from each nursery
+sample_ed50s <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  rs <- diff(range(s))
+  rt <- diff(qnorm(c(0.01, 0.99), mean(ed50s), sd(ed50s)))
+  propr <- rs / rt
+  return(propr)
+}
+
+rc <- res %>%
+  select(nursery, estimate_ed50) %>%
+  nest(data = estimate_ed50) %>%
+  crossing(n = 1:25) %>%
+  mutate(prop = map2(data, n, ~ replicate(10000, sample_ed50s(.x$estimate_ed50, .y))),
+         mean = map_dbl(prop, mean))
+
+rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7),
+        legend.position = "none") +
+  labs(x = "Genets sampled", y = "Proportion of nursery's\n ED50 range captured in sample")
+
+
+
+# Prob of any genos in top 25% of population
+top25pop <- quantile(rnorm(10000, mean(res.adj$ed50_adj), sd(res.adj$ed50_adj)), prob = 0.75)
+sample_ed50s2 <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  any_top25 <- any(s >= top25pop)
+  return(any_top25)
+}
+
+rc2 <- res.adj %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
+  crossing(n = 1:25) %>%
+  mutate(ntop25 = map2(data, n, ~ replicate(10000, sample_ed50s2(.x$ed50_adj, .y))),
+         mean = map_dbl(ntop25, mean))
+
+rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7),
+        legend.position = c(0.8, 0.4)) +
+  labs(x = "Genets sampled", 
+       y = expression(atop("Probability sample captures", paste("top quartile in population ED50" [adj]))))
+
+fig6 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
+fig6
+ggsave("output/fig6.png", width = 172, height = 75, units = "mm")
 ```
 
 
@@ -652,7 +712,7 @@ mod <- lm(ed50_oct ~ ed50_jun, data = ed50s2)
 ## Slope of fit
 tibble(slope = coef(mod)[2]) %>% knitr::kable()
 ## Test if slope is different than 1
-car::linearHypothesis(mod, "ed50_jun = 1")
+car::linearHypothesis(mod, "ed50_jun = 1") %>% knitr::kable()
 ## Find mean difference between Oct and Jun values
 augment(mod) %>%
   mutate(diff = ed50_oct - ed50_jun) %>%
@@ -662,172 +722,3 @@ augment(mod) %>%
 
 There is a high correlation between ED50 values obtained from the same coral genets (from the same nurseries) run in both June and October (n = 27 genets). This suggests that ED50 values from independently run CBASS assays are relatively reproducible for a given genotype. The shift in y-intercept could be due to seasonal differences, or experimental differences, in October vs. June. Overall, this high reproducibility is very encouraging for the continued use of the CBASS approach for thermal tolerance phenotyping.
 
-# Thermal tolerance phenotype rarefaction curves
-```{r}
-# ED50 rarefaction curves from each nursery
-adjed50dist <- rnorm(100000, meanadj, sdadj)
-deciles <- quantile(adjed50dist, probs = seq(0, 1, 0.1))
-
-sample_ed50s <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  prop_deciles <- length(unique(cut(s, deciles))) / 10
-  return(prop_deciles)
-}
-
-rc <- res.adj %>%
-  select(nursery, ed50_adj) %>%
-  nest(data = ed50_adj) %>%
-  crossing(n = 1:25) %>%
-  mutate(prop = map2(data, n, ~ replicate(1000, sample_ed50s(.x$ed50_adj, .y))),
-         mean = map_dbl(prop, mean))
-
-rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(axis.text = element_text(size = 7),
-        legend.position = "none") +
-  labs(x = "Genets sampled", y = "Proportion of ED50 range\nin sample")
-
-
-
-# Prob of any genos in top 25% of population
-sample_ed50s2 <- function(ed50s, n) {
-  top25 <- quantile(rnorm(100000, mean(ed50s), sd(ed50s)), prob = 0.75)
-  s <- sample(ed50s, n)
-  any_top25 <- any(s >= top25)
-  return(any_top25)
-}
-
-rc2 <- res.adj %>%
-  #mutate(ed50_adj = rnorm(n = 229, mean = 35.98, sd = 10)) %>%
-  select(nursery, ed50_adj) %>%
-  nest(data = ed50_adj) %>%
-  crossing(n = 1:25) %>%
-  mutate(ntop25 = map2(data, n, ~ replicate(100, sample_ed50s2(.x$ed50_adj, .y))),
-         mean = map_dbl(ntop25, mean))
-
-rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(axis.text = element_text(size = 7),
-        legend.position = c(0.8, 0.4)) +
-  labs(x = "Genets sampled", y = "Probability sample includes\ntop quartile ED50")
-
-fig7 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
-ggsave("output/fig6.png", width = 172, height = 75, units = "mm")
-```
-
-
-```{r, include = FALSE, eval = FALSE}
-myd <- rnorm(n = 1000000, mean = 10, sd = 0.1)
-myq <- quantile(rnorm(1000000, mean(myd), sd(myd)), prob = 0.75)
-myq
-
-sample_ed50s2 <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  any_top25 <- any(s >= myq)
-  return(any_top25)
-}
-
-
-tibble(n = 1:20) %>%
-  mutate(ntop25 = map(n, ~ replicate(1000, sample_ed50s2(myd, .x))),
-         mean = map_dbl(ntop25, mean))
-
-test <- c("a", "b", "c", "d")
-draw7 <- replicate(100000, any(sample(test, 8, replace = TRUE) == "d"))
-table(draw7)
-```
-
-```{r}
-res %>%
-  group_by(nursery) %>%
-  summarize(var = var(estimate_ed50))
-
-var(c(35, 37))
-var(c(35, 36, 37, 38))
-
-var(c(35, 36))
-var(c(36, 37))
-var(c(35, 37))
-var(c(35, 38))
-var(c(36, 38))
-var(c(37, 38))
-
-
-myd <- rnorm(n = 40, mean = 35.98, sd = 0.38)
-
-pvar <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  svar <- var(s)
-  tvar <- var(ed50s)
-  return(svar / tvar)
-}
-
-
-tibble(n = 2:20) %>%
-  mutate(hi = map(n, ~ replicate(100, pvar(myd, .x))),
-         mean = map_dbl(hi, mean))
-```
-
-```{r}
-# ED50 rarefaction curves from each nursery
-
-sample_ed50s <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  rs <- diff(range(s))
-  #rt <- diff(range(ed50s))
-  rt <- diff(qnorm(c(0.01, 0.99), mean(ed50s), sd(ed50s)))
-  propr <- rs / rt
-  return(propr)
-}
-
-rc <- res %>%
-  select(nursery, estimate_ed50) %>%
-  nest(data = estimate_ed50) %>%
-  crossing(n = 1:25) %>%
-  mutate(prop = map2(data, n, ~ replicate(10000, sample_ed50s(.x$estimate_ed50, .y))),
-         mean = map_dbl(prop, mean))
-
-rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(axis.text = element_text(size = 7)) +
-  labs(x = "Genets sampled", y = "Proportion of each nursery's\n total ED50 range captured in sample")
-rc1fig
-```
-
-
-```{r}
-# standard deviation of sample of X genets?
-
-sample_ed50s <- function(ed50s, n) {
-  m <- mean(ed50s)
-  s <- sample(ed50s, n)
-  sds <- sum(sapply(s, function(s) (s - m)^2))
-  sda <- sd(ed50s)
-  return(sds / sda)
-}
-
-rc <- res %>%
-  select(nursery, estimate_ed50) %>%
-  nest(data = estimate_ed50) %>%
-  crossing(n = 1:25) %>%
-  mutate(prop = map2(data, n, ~ replicate(100, sample_ed50s(.x$estimate_ed50, .y))),
-         mean = map_dbl(prop, mean))
-
-rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point() +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(axis.text = element_text(size = 7)) +
-  labs(x = "Genets sampled", y = "Proportion of each nursery's\n total ED50 range captured in sample")
-rc1fig
-```
