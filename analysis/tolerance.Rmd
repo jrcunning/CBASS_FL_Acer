@@ -743,3 +743,91 @@ draw7 <- replicate(100000, any(sample(test, 8, replace = TRUE) == "d"))
 table(draw7)
 ```
 
+```{r}
+res %>%
+  group_by(nursery) %>%
+  summarize(var = var(estimate_ed50))
+
+var(c(35, 37))
+var(c(35, 36, 37, 38))
+
+var(c(35, 36))
+var(c(36, 37))
+var(c(35, 37))
+var(c(35, 38))
+var(c(36, 38))
+var(c(37, 38))
+
+
+myd <- rnorm(n = 40, mean = 35.98, sd = 0.38)
+
+pvar <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  svar <- var(s)
+  tvar <- var(ed50s)
+  return(svar / tvar)
+}
+
+
+tibble(n = 2:20) %>%
+  mutate(hi = map(n, ~ replicate(100, pvar(myd, .x))),
+         mean = map_dbl(hi, mean))
+```
+
+```{r}
+# ED50 rarefaction curves from each nursery
+
+sample_ed50s <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  rs <- diff(range(s))
+  #rt <- diff(range(ed50s))
+  rt <- diff(qnorm(c(0.01, 0.99), mean(ed50s), sd(ed50s)))
+  propr <- rs / rt
+  return(propr)
+}
+
+rc <- res %>%
+  select(nursery, estimate_ed50) %>%
+  nest(data = estimate_ed50) %>%
+  crossing(n = 1:25) %>%
+  mutate(prop = map2(data, n, ~ replicate(10000, sample_ed50s(.x$estimate_ed50, .y))),
+         mean = map_dbl(prop, mean))
+
+rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7)) +
+  labs(x = "Genets sampled", y = "Proportion of each nursery's\n total ED50 range captured in sample")
+rc1fig
+```
+
+
+```{r}
+# standard deviation of sample of X genets?
+
+sample_ed50s <- function(ed50s, n) {
+  m <- mean(ed50s)
+  s <- sample(ed50s, n)
+  sds <- sum(sapply(s, function(s) (s - m)^2))
+  sda <- sd(ed50s)
+  return(sds / sda)
+}
+
+rc <- res %>%
+  select(nursery, estimate_ed50) %>%
+  nest(data = estimate_ed50) %>%
+  crossing(n = 1:25) %>%
+  mutate(prop = map2(data, n, ~ replicate(100, sample_ed50s(.x$estimate_ed50, .y))),
+         mean = map_dbl(prop, mean))
+
+rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(axis.text = element_text(size = 7)) +
+  labs(x = "Genets sampled", y = "Proportion of each nursery's\n total ED50 range captured in sample")
+rc1fig
+```
