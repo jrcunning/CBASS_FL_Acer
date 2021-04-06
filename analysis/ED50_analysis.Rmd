@@ -85,6 +85,10 @@ res.all <- mods %>%
 # Filter to analyze only CBASS runs from Coral Reef II in August and October
 res <- res.all %>%
   filter(date %in% c("2020-08", "2020-10"))
+
+# Recode nursery abbreviations
+res <- res %>%
+  mutate(nursery = recode(nursery, mote = "MML", fwc = "FWC", rrt = "RR", crf = "CRF", um = "UM", nsu = "NSU"))
 ```
 
 # How many corals and unique genotypes were tested?
@@ -128,13 +132,13 @@ anova(mod_nogeno, mod_geno)
 
 # Histogram colored by nursery with density plot
 hist1 <- res %>%
-  mutate(nursery = factor(nursery, levels = c("fwc", "um", "mote", "crf", "nsu", "rrt"))) %>%
   ggplot(aes(x = estimate_ed50)) + 
-  geom_histogram(aes(fill = nursery), binwidth = 0.1, alpha = 0.4) +
+  geom_histogram(aes(fill = nursery), binwidth = 0.1, alpha = 0.4, position = position_stack(reverse = TRUE)) +
   geom_density(aes(y = ..count.. * 0.1)) +
   theme_few() +
   theme(legend.position = c(0.15, 0.65), legend.key.size = unit(0.25, "cm")) +
-  labs(x = "ED50 (°C)", y = "Count", title = expression(V[P]))
+  labs(x = "ED50 (°C)", y = "Count", title = expression(V[P])) +
+  guides(fill = guide_legend(reverse = TRUE))
 
 # Remove nursery effect
 mod <- lm(estimate_ed50 ~ nursery, data = res)
@@ -439,12 +443,12 @@ There are no relationships between ED50 and source colony latitude, longitude, o
 nursmmm <- dft %>%
   group_by(nursery) %>%
   summarize(meaned50 = mean(estimate_ed50)) %>%
-  mutate(nursmmm = case_when(nursery == "mote" ~ 30.2694,
-                             nursery == "um"  ~ 29.5412,
-                             nursery == "nsu" ~ 29.5344,
-                             nursery == "crf" ~ 29.7307,
-                             nursery == "rrt" ~ 29.7307,
-                             nursery == "fwc" ~ 29.9965)) 
+  mutate(nursmmm = case_when(nursery == "MML" ~ 30.2694,
+                             nursery == "UM"  ~ 29.5412,
+                             nursery == "NSU" ~ 29.5344,
+                             nursery == "CRF" ~ 29.7307,
+                             nursery == "RR" ~ 29.7307,
+                             nursery == "FWC" ~ 29.9965)) 
 
 nursmmm %>%
   ggplot(aes(x = nursmmm, y = meaned50)) +
@@ -544,7 +548,8 @@ rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
   theme(axis.text = element_text(size = 7),
         legend.position = c(0.8, 0.4)) +
   labs(x = "Genets sampled", 
-       y = expression(atop("Probability sample captures", paste("top quartile in population ED50" [adj]))))
+       y = expression(atop("Probability sample captures", paste("top quartile in population ED50" [adj])))) +
+  guides(color = guide_legend(reverse = TRUE))
 
 fig5 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
 fig5
