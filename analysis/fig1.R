@@ -12,32 +12,44 @@ map_fl <- get_map(location = c(lon = -80.8, lat = 25.2), zoom = 8,
                   source = "google", maptype = "satellite")
 
 # Set locations of nurseries
-loc <- bind_rows("Nova\nSoutheastern\nUniversity\n(n = 37)" = c(lon = -80.097033, lat = 26.124533), 
-                 "University\nof Miami\n(n = 41)" = c(lon = -80.109067, lat = 25.676267), 
-                 "Coral\nRestoration\nFoundation\n(n = 44)" = c(lon = -80.43, lat = 24.99), 
-                 "Reef Renewal\n(n = 42)" = c(lon = -80.45, lat = 24.97), 
-                 "Florida FWC\n(n = 25)" = c(lon = -81.025117, lat = 24.667233), 
-                 "Mote\nMarine Lab\n(n = 40)" = c(lon = -81.40009, lat = 24.56257), 
-                 .id = "nursery")
+# loc <- bind_rows("Nova\nSoutheastern\nUniversity\n(n = 37)" = c(lon = -80.097033, lat = 26.124533), 
+#                  "University\nof Miami\n(n = 41)" = c(lon = -80.109067, lat = 25.676267), 
+#                  "Coral\nRestoration\nFoundation\n(n = 44)" = c(lon = -80.43, lat = 24.99), 
+#                  "Reef Renewal\n(n = 42)" = c(lon = -80.45, lat = 24.97), 
+#                  "Florida FWC\n(n = 25)" = c(lon = -81.025117, lat = 24.667233), 
+#                  "Mote\nMarine Lab\n(n = 40)" = c(lon = -81.40009, lat = 24.56257), 
+#                  .id = "nursery")
+
+loc <- bind_rows("NSU\n(n = 37)" = c(lon = -80.097033, lat = 26.124533), 
+                 "UM\n(n = 41)" = c(lon = -80.109067, lat = 25.676267), 
+                 "CRF\n(n = 44)" = c(lon = -80.43, lat = 24.99), 
+                 "RR\n(n = 42)" = c(lon = -80.45, lat = 24.97), 
+                 "FWC\n(n = 25)" = c(lon = -81.025117, lat = 24.667233), 
+                 "MML\n(n = 40)" = c(lon = -81.40009, lat = 24.56257), 
+                 .id = "nursery") %>%
+  mutate(nursery = fct_reorder(nursery, lon)) %>%
+  arrange(nursery)
 
 # Add cruise dates for each nursery visited
-loc <- loc %>%
-  mutate("Cruise Date" = case_when(nursery == "Nova\nSoutheastern\nUniversity" ~ "Aug. 2020",
-                                   TRUE ~ "Oct. 2020"))
+# loc <- loc %>%
+#   mutate("Cruise Date" = case_when(nursery == "Nova\nSoutheastern\nUniversity" ~ "Aug. 2020",
+#                                    TRUE ~ "Oct. 2020"))
 
 # Plot map with nursery labels
-set.seed(9)
+set.seed(10)
 fig1a <- ggmap(map_fl, extent = "panel") +
-  geom_point(data = loc, aes(x = lon, y = lat, shape = `Cruise Date`), fill = "white", size = 2) +
+  geom_point(data = loc, aes(x = lon, y = lat), pch = 21, fill = "white", size = 2) +
   scale_shape_manual(values = c(21, 24)) +
   geom_label_repel(dat = loc, aes(label = nursery), label.padding = 0.125,
                    fontface = "italic", size = 1.5,
                    force = 50, segment.size = 0.3, segment.color = "black", min.segment.length = 0,
-                   direction = "both", hjust = 0.5, vjust = 0.5, nudge_x = 0.25, nudge_y = -0.25) +
+                   direction = "both", hjust = 0.5, vjust = 0.5, 
+                   nudge_x = c(-0.6, -0.15, 0.05, 0.5, 0.5, 0.5), 
+                   nudge_y = c(-0.5, -0.5, -0.5, -0.05, 0, 0.2)) +
   theme(legend.position = "none") +
   theme(text = element_text(size = 10)) +
   labs(x = "Latitude", y = "Longitude")
-
+fig1a
 
 
 
