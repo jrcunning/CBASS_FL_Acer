@@ -206,7 +206,7 @@ tibble(omega.squared = omega.squared(
 # Get mean and sd by nursery for plotting
 nurs.stats <- res %>%
   group_by(nursery) %>%
-  summarise(mean = mean(estimate_ed50), sd = sd(estimate_ed50)) %>%
+  summarise(mean = mean(estimate_ed50), sd = sd(estimate_ed50), n = n()) %>%
   ungroup()
 
 # Median pairwise difference between nurseries
@@ -240,7 +240,8 @@ nurs.fig <- ggplot(res, aes(x = nursery, y = estimate_ed50, fill = nursery, grou
   geom_errorbar(data = nurs.stats, inherit.aes = FALSE, width = 0, lwd = 0.25,
                 aes(x = nursery, y = mean, ymin = mean - sd, ymax = mean + sd),
                 position = position_nudge(x = 0, y = 0)) +
-  geom_text(data = nurs.stats, aes(y = 37.5, label = group), size = 2) +
+  geom_text(data = nurs.stats, aes(y = 37.5, label = group), size = 3) +
+  geom_text(data = nurs.stats, aes(y = 37.5, label = paste("n=", n)), nudge_x = 0.2, size = 3) +
   coord_flip() +
   scale_size(range = c(0.5, 3)) +
   scale_shape_manual(values = c(21, 22, 23, 24, 25)) +
