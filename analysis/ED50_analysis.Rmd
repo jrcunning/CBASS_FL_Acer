@@ -471,9 +471,9 @@ top10plot <- ggplot(data = world) +
         plot.margin = margin(6,3,6,6)) +
   labs(y = "Latitude", x = "Longitude")
 top10plot
-newfig <- cowplot::plot_grid(lat.plot, lon.plot, mmm5.plot, top10plot, nrow = 2,
+newfig3 <- cowplot::plot_grid(lat.plot, lon.plot, mmm5.plot, top10plot, nrow = 2,
                    labels = "AUTO")
-ggsave("output/fig3.png", plot = newfig, width = 90, height = 80, units = "mm")
+ggsave("output/fig3.png", plot = newfig3, width = 90, height = 80, units = "mm")
 ```
 
 # Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
@@ -514,12 +514,12 @@ rc <- res %>%
 
 rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
   geom_line() +
-  geom_point() +
+  geom_point(size = 1) +
   scale_y_continuous(limits = c(0, 1)) +
   theme_few() +
-  theme(axis.text = element_text(size = 7),
+  theme(text = element_text(size = 8),
         legend.position = "none") +
-  labs(x = "Genets sampled", y = "Proportion of nursery's\n ED50 range captured in sample")
+  labs(x = "Genets sampled", y = "Proportion of nursery\n ED50 range captured")
 
 
 
@@ -540,18 +540,20 @@ rc2 <- res.adj %>%
 
 rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
   geom_line() +
-  geom_point() +
+  geom_point(size = 1) +
   scale_y_continuous(limits = c(0, 1)) +
   theme_few() +
-  theme(axis.text = element_text(size = 7),
-        legend.position = c(0.8, 0.4)) +
+  theme(text = element_text(size = 8),
+        legend.position = c(0.8, 0.4),
+        legend.key.size = unit(3, 'mm'),
+        legend.spacing.y = unit(1, "mm")) +
   labs(x = "Genets sampled", 
-       y = expression(atop("Probability sample captures", paste("top quartile in population ED50" [adj])))) +
+       y = "Probability top quartile\nof population captured") +
   guides(color = guide_legend(reverse = TRUE))
 
-fig5 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
-fig5
-ggsave("output/fig5.png", width = 172, height = 75, units = "mm")
+fig4 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
+fig4
+ggsave("output/fig4.png", width = 114, height = 60, units = "mm")
 ```
 
 
