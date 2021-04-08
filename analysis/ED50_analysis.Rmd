@@ -356,18 +356,18 @@ anova(mod) %>%
   knitr::kable()
 
 lat.plot <- ggplot(res.adj, aes(x = source_lat, y = ed50_adj)) +
-  geom_point(size = 0.75) +
+  geom_point(size = 0.25) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
-  theme(axis.text = element_text(size = 7)) +
+  theme(text = element_text(size = 10)) +
   labs(x = "Latitude", y = expression(paste(ED50[adj], " (°C)")))
 
 lon.plot <- ggplot(res.adj, aes(x = source_lon, y = ed50_adj)) +
-  geom_point(size = 0.75) +
+  geom_point(size = 0.25) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
-  theme(axis.text = element_text(size = 7)) +
-  labs(x = "Longitude", y = NULL)
+  theme(text = element_text(size = 10)) +
+  labs(x = "Longitude", y = expression(paste(ED50[adj], " (°C)")))
 
 cowplot::plot_grid(lat.plot, lon.plot, ncol = 2)
 ```
@@ -416,25 +416,25 @@ anova(mod5km) %>%
 
 # Plots
 mmm9.plot <- ggplot(dft, aes(x = mmm_9km, y = ed50_adj)) +
-  geom_point(size = 0.75) +
+  geom_point(size = 0.25) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
-  theme(axis.text = element_text(size = 7)) +
+  theme(text = element_text(size = 10)) +
   scale_x_continuous(labels = function(x) str_trim(x)) +
   labs(x = "MMM (9 km)", y = NULL)
 
 mmm5.plot <- ggplot(dft, aes(x = mmm_5km, y = ed50_adj)) +
-  geom_point(size = 0.75) +
+  geom_point(size = 0.25) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
-  theme(axis.text = element_text(size = 7)) +
+  theme(text = element_text(size = 10)) +
   scale_x_continuous(labels = function(x) str_trim(x)) +
-  labs(x = "MMM (5 km)", y = NULL)
+  labs(x = "MMM (°C)", y = expression(paste(ED50[adj], " (°C)")))
 
 cowplot::plot_grid(mmm9.plot, mmm5.plot, ncol = 2)
 ```
 
-```{r, fig.width = 11, fig.height = 3}
+```{r, include = FALSE, eval = FALSE, fig.width = 11, fig.height = 3}
 fig4 <- cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
                    rel_widths = c(1.07,1,1,1), labels = "AUTO")
 ggsave(plot = fig4, filename = "output/fig4.png", width = 190, height = 50, units = "mm")
@@ -448,6 +448,33 @@ anova(mod) %>%
 ```
 
 There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This is a pretty cool finding because it suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
+
+# Map the source locations of the most thermally tolerant genets
+```{r, eval = FALSE, include = FALSE}
+top10 <- res.adj %>%
+  filter(ed50_adj > quantile(ed50_adj, 0.9))
+
+library("rnaturalearth")
+library("rnaturalearthdata")
+library("sf")
+
+world <- ne_countries(scale = "large", returnclass = "sf")
+top10plot <- ggplot(data = world) +
+  geom_sf(lwd = 0) +
+  coord_sf(xlim = c(-82.35, -79.75), ylim = c(24.3, 26.4), expand = FALSE) +
+  geom_point(aes(x = source_lon, y = source_lat), data = res.adj, size = 0.1, color = "black", alpha = 0.5) +
+  geom_point(aes(x = source_lon, y = source_lat), data = top10, color = "red", size = 1.5, alpha = 1, pch = "X") +
+  scale_x_continuous(breaks = seq(-82, -80, 1), labels = seq(-82, -80, 1)) +
+  scale_y_continuous(breaks = seq(25, 26, 1), labels = seq(25, 26, 1)) +
+  theme_few() +
+  theme(text = element_text(size = 10),
+        plot.margin = margin(6,3,6,6)) +
+  labs(y = "Latitude", x = "Longitude")
+top10plot
+newfig <- cowplot::plot_grid(lat.plot, lon.plot, mmm5.plot, top10plot, nrow = 2,
+                   labels = "AUTO")
+ggsave("output/fig3.png", plot = newfig, width = 90, height = 80, units = "mm")
+```
 
 # Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
 ```{r, fig.width = 4, fig.height = 4}
@@ -466,47 +493,6 @@ nursmmm %>%
   ggplot(aes(x = nursmmm, y = meaned50)) +
   geom_label(aes(label = nursery))
 ```
-
-# Map the source locations of the most thermally tolerant genets
-```{r, eval = FALSE, include = FALSE}
-top10 <- res.adj %>%
-  filter(ed50_adj > quantile(ed50_adj, 0.9))
-bot10 <- res.adj %>%
-  filter(ed50_adj < quantile(ed50_adj, 0.1))
-
-
-ggplot(res.adj, aes(x = source_lon, y = source_lat)) + 
-  geom_point(size = 0.25, color = "gray") +
-  geom_point(data = top10, color = "red", size = 2, alpha = 0.5) +
-  #geom_point(data = bot10, color = "royalblue", size = 2, alpha = 0.5) +
-  theme_few()
-
-ggmap(map_fl, extent = "device") +
-  geom_point(aes(x = source_lon, y = source_lat), data = res.adj, size = 0.25, color = "gray") +
-  geom_point(aes(x = source_lon, y = source_lat), data = top10, color = "red", size = 2, alpha = 0.5)
-
-top10
-
-library(maps)
-library(sf) 
-library(units)
-library(rnaturalearth)
-dd <- st_as_sf(top10, coords = c("source_lon", "source_lat"), crs = 4326)
-st_distance(dd)
-
-top10 %>%
-  count(nursery)
-bot10 %>%
-  count(nursery)
-
-res.adj %>% anti_join(top20) %>% anti_join(bot20) %>%
-  count(nursery)
-
-res.adj %>%
-  filter(nursery == "fwc") %>%
-  inner_join(top20)
-```
-
 
 # Thermal tolerance phenotype rarefaction curves
 ```{r}
