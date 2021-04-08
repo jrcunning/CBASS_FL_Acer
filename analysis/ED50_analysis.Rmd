@@ -133,12 +133,14 @@ anova(mod_nogeno, mod_geno)
 # Histogram colored by nursery with density plot
 hist1 <- res %>%
   ggplot(aes(x = estimate_ed50)) + 
-  geom_histogram(aes(fill = nursery), binwidth = 0.1, alpha = 0.4, position = position_stack(reverse = TRUE)) +
+  geom_histogram(aes(fill = nursery), binwidth = 0.1, alpha = 0.7, position = position_stack(reverse = TRUE)) +
   geom_density(aes(y = ..count.. * 0.1)) +
   theme_few() +
-  theme(legend.position = c(0.15, 0.65), legend.key.size = unit(0.25, "cm")) +
-  labs(x = "ED50 (°C)", y = "Count", title = expression(V[P])) +
-  guides(fill = guide_legend(reverse = TRUE))
+  theme(text = element_text(size = 10)) +
+  theme(legend.position = "none", legend.key.size = unit(0.25, "cm")) +
+  labs(x = "ED50 (°C)", y = "Count") +
+  guides(fill = guide_legend(reverse = TRUE)) + 
+  xlim(qnorm(c(0.0001, 0.999999), meanadj, sdadj))
 
 # Remove nursery effect
 mod <- lm(estimate_ed50 ~ nursery, data = res)
@@ -160,17 +162,18 @@ hist2 <- ggplot(res.adj, aes(x = ed50_adj)) +
   xlim(qnorm(c(0.00001, 0.99999), meanadj, sdadj)) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
   annotate("text", x = meanadj - 0.1, y = 0.125, adj = 1,
-           label = paste0("mean = ", round(meanadj, 2))) +
+           label = paste0("mean = ", round(meanadj, 2)), size = 2) +
   annotate("text", x = meanadj + sdadj + 0.1, 
            y = dnorm(meanadj + sdadj, meanadj, sdadj) * 0.1, 
-           adj = 0, label = paste0("s.d. = ", round(sdadj, 2))) +
+           adj = 0, label = paste0("s.d. = ", round(sdadj, 2)), size = 2) +
   theme_few() +
-  labs(x = "ED50 (°C) adjusted", y = "Percentage", title = expression(V[P] - V[E]))
+  theme(text = element_text(size = 10)) +
+  labs(x = "ED50 (°C) adjusted", y = "Percentage")
 
 
 # Combine histograms into multi-panel figure
 fig2 <- cowplot::plot_grid(
-  hist1 + xlim(qnorm(c(0.00001, 0.99999), meanadj, sdadj)), 
+  hist1, 
   hist2, labels = "AUTO")
 fig2
 
@@ -182,7 +185,7 @@ tidy(summary(res$estimate_ed50)) %>%
 tidy(shapiro.test(res.adj$ed50_adj)) %>% 
   knitr::kable(caption = "Normality test for adjusted ED50 values")
 
-ggsave("output/fig2.png", width = 172, height = 75, units = "mm")
+#ggsave("output/fig2.png", width = 172, height = 75, units = "mm")
 ```
 
 After adjusting for variation due to nursery location (i.e., environment), ED50 values are approximately normally distributed, with a mean of 35.98°C and standard deviation of 0.38°C. This is the variance due to genetic effects (and measurement error).
@@ -233,27 +236,35 @@ nurs.fig <- ggplot(res, aes(x = nursery, y = estimate_ed50, fill = nursery, grou
                    adjust = 1, width = 2, alpha = 0.7, lwd = 0) +
   geom_boxplot(position = position_nudge(x = 0.2, y = 0), width = 0.1,
                outlier.shape = NA, alpha = 1, lwd = 0.25) +
-  geom_point(aes(color = nursery), alpha = 0.7,
+  geom_point(aes(color = nursery), alpha = 0.7, size = 1,
              position = position_jitter(width = 0.075)) +
   geom_point(data = nurs.stats, aes(x = nursery, y = mean), inherit.aes = FALSE,
-             position = position_nudge(x = 0, y = 0), size = 2, pch = 5) +
+             position = position_nudge(x = 0, y = 0), size = 1, pch = 5) +
   geom_errorbar(data = nurs.stats, inherit.aes = FALSE, width = 0, lwd = 0.25,
                 aes(x = nursery, y = mean, ymin = mean - sd, ymax = mean + sd),
                 position = position_nudge(x = 0, y = 0)) +
-  geom_text(data = nurs.stats, aes(y = 37.5, label = group), size = 3) +
-  geom_text(data = nurs.stats, aes(y = 37.5, label = paste("n=", n)), nudge_x = 0.2, size = 3) +
+  geom_text(data = nurs.stats, aes(y = 37.5, label = group), size = 2) +
+  geom_text(data = nurs.stats, aes(y = 37.5, label = paste("n=", n)), nudge_x = 0.2, size = 2) +
   coord_flip() +
   scale_size(range = c(0.5, 3)) +
   scale_shape_manual(values = c(21, 22, 23, 24, 25)) +
   theme_few() +
+  theme(text = element_text(size = 10),
+        axis.title.y = element_blank()) +
   theme(legend.position = "none") +
-  labs(y = "ED50 (°C)", x = "Nursery")
+  labs(y = "ED50 (°C)", x = NA)
 nurs.fig
 
-ggsave("output/fig3.png", width = 120, height = 100, units = "mm")
+#ggsave("output/fig3.png", width = 120, height = 100, units = "mm")
 ```
 
 There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different set of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
+
+```{r}
+# 3-panel Figure 2
+fig2 <- cowplot::plot_grid(hist1, nurs.fig, hist2, ncol = 3, labels = "AUTO")
+ggsave("output/fig2.png", plot = fig2, width = 180, height = 60, units = "mm")
+```
 
 
 # How does thermal tolerance vary for the same genotype grown at different nurseries?
