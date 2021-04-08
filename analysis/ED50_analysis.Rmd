@@ -140,7 +140,7 @@ hist1 <- res %>%
   theme(legend.position = "none", legend.key.size = unit(0.25, "cm")) +
   labs(x = "ED50 (°C)", y = "Count") +
   guides(fill = guide_legend(reverse = TRUE)) + 
-  xlim(qnorm(c(0.0001, 0.999999), meanadj, sdadj))
+  xlim(qnorm(c(0.005, 0.9999), mean(res$estimate_ed50), sd(res$estimate_ed50)))
 
 # Remove nursery effect
 mod <- lm(estimate_ed50 ~ nursery, data = res)
@@ -261,7 +261,7 @@ nurs.fig
 There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different set of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
 
 ```{r}
-# 3-panel Figure 2
+# 3-panel Figure 2   
 fig2 <- cowplot::plot_grid(hist1, nurs.fig, hist2, ncol = 3, labels = "AUTO")
 ggsave("output/fig2.png", plot = fig2, width = 180, height = 60, units = "mm")
 ```
@@ -299,7 +299,7 @@ ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, 
         legend.title = element_text(size = 8)) +
   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
 
-ggsave(filename = "output/figS2.png", width = 120, height = 87, units = "mm")
+ggsave(filename = "output/figS1.png", width = 120, height = 87, units = "mm")
 
 tidy(anova(lm(ed50_adj ~ geno, data = multi.adj))) %>%
   knitr::kable(caption = "ANOVA: Effect of genotype on ED50")
@@ -313,7 +313,7 @@ cors <- multi.adj %>%
 ggpairs(cors, title = "Correlation of ED50 values for same genotype at multiple nurseries")
 
 corfig <- ggpairs(cors)
-ggsave(plot = corfig, filename = "output/figS3.png", width = 190, height = 190, units = "mm")
+ggsave(plot = corfig, filename = "output/figS2.png", width = 190, height = 190, units = "mm")
 ```
 
 Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 30 genotypes in this subset were present at only two (n=17) or three nurseries (n=13), so the low replication for each genotype is definitely a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
@@ -450,7 +450,7 @@ anova(mod) %>%
 There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This is a pretty cool finding because it suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
 
 # Map the source locations of the most thermally tolerant genets
-```{r, eval = FALSE, include = FALSE}
+```{r, eval = TRUE, include = TRUE}
 top10 <- res.adj %>%
   filter(ed50_adj > quantile(ed50_adj, 0.9))
 
@@ -611,7 +611,7 @@ fig <- ggplot(ed50s2, aes(y = ed50_oct, x = ed50_jun)) +
   theme_few()
 fig
 
-ggsave("output/figS1.png", width = 90, height = 99, units = "mm")
+ggsave("output/fig5.png", width = 87, height = 97, units = "mm")
 
 # Linear regression
 mod <- lm(ed50_oct ~ ed50_jun, data = ed50s2)
