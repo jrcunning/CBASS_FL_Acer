@@ -92,19 +92,33 @@ res <- res %>%
   mutate(nursery = recode(nursery, mote = "MML", fwc = "FWC", rrt = "RR", crf = "CRF", um = "UM", nsu = "NSU"))
 ```
 
-# How many corals and unique genotypes were tested?
-```{r}
+# How many coral colonies and unique genotypes were tested?
+```{r, fig.height = 7, fig.width = 7, fig.asp = 1}
 res %>%
-  summarize(ncoral = n_distinct(nursery, name),
-            ngeno = n_distinct(geno)) %>%
-  knitr::kable()
-
-res %>%
-  group_by(nursery) %>% 
-  summarise(n = n()) %>%
+  summarize(n_colonies = n_distinct(nursery, name),
+            n_genotypes = n_distinct(geno)) %>%
   knitr::kable()
 ```
 
+# Number of unique genotypes shared across nurseries
+```{r eval = FALSE}
+mat <- res %>%
+  distinct(nursery, geno) %>%
+  mutate(present = TRUE) %>%
+  complete(nursery, geno, fill = list(present = FALSE)) %>%         # Complete implicit missing values
+  pivot_wider(names_from = "nursery", values_from = "present") %>%
+  mutate(n_nurs = rowSums(.[-1]))
+
+library(eulerr)   # install.packages("eulerr")
+vennd <- euler(mat[, 7:2], shape = "ellipse")
+vd <- plot(vennd, quantities = list(cex = 0.5), legend = TRUE,
+     fills = list(fill = rev(c("#F8766D", "#B79F00", "#00BA38", "#00BFC4", "#619CFF", "#F564E3")), alpha = 0.6))
+png(filename = "output/figS1.png", width = 90, height = 90, units = "mm", res = 300)
+grid::grid.draw(vd)
+dev.off()
+```
+
+![](../output/figS1.png){width=50%}
 
 ```{r test_geno_effect, eval = FALSE, include = FALSE}
 # Do different genotypes have different thermal tolerance?
@@ -126,7 +140,7 @@ anova(mod_nogeno, mod_geno)
 ## Genotype is highly significant
 ```
 
-# What is the range in thermal tolerance across all genotypes?
+# What is the range in thermal tolerance across all colonies?
 
 ```{r ed50_histograms, fig.width = 11}
 # Basic histogram
@@ -305,7 +319,7 @@ ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, 
         legend.title = element_text(size = 8)) +
   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
 
-ggsave(filename = "output/figS1.png", width = 120, height = 87, units = "mm")
+ggsave(filename = "output/figS2.png", width = 120, height = 87, units = "mm")
 
 tidy(anova(lm(ed50_adj ~ geno, data = multi.adj))) %>%
   knitr::kable(caption = "ANOVA: Effect of genotype on ED50")
@@ -318,8 +332,10 @@ cors <- multi.adj %>%
 
 ggpairs(cors, title = "Correlation of ED50 values for same genotype at multiple nurseries")
 
-corfig <- ggpairs(cors)
-ggsave(plot = corfig, filename = "output/figS2.png", width = 190, height = 190, units = "mm")
+(corfig <- ggpairs(cors, diag = list(continuous = "blankDiag")) +
+  theme_few() +
+  labs(x = "Adjusted ED50 (°C)", y = "Adjusted ED50 (°C)"))
+ggsave(plot = corfig, filename = "output/figS3.png", width = 190, height = 190, units = "mm")
 ```
 
 Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 30 genotypes in this subset were present at only two (n=17) or three nurseries (n=13), so the low replication for each genotype is definitely a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
@@ -538,6 +554,18 @@ rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
 fig4 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
 fig4
 ggsave("output/fig4.png", width = 90, height = 50, units = "mm")
+
+rc %>%
+  group_by(nursery) %>%
+  filter(mean >= 0.5) %>%
+  filter(n == min(n)) %>%
+  knitr::kable()
+
+rc2 %>%
+  group_by(nursery) %>%
+  filter(mean >= 0.9) %>%
+  filter(n == min(n)) %>%
+  knitr::kable()
 ```
 
 
