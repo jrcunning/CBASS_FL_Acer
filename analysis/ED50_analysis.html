@@ -524,34 +524,6 @@ res &lt;- res %&gt;%
 </tr>
 </tbody>
 </table>
-<pre class="r"><code>res %&gt;%
-  group_by(nursery, name) %&gt;%
-  summarize(n = n()) %&gt;%
-  arrange(-n)</code></pre>
-<pre><code>## # A tibble: 228 x 3
-## # Groups:   nursery [6]
-##    nursery name      n
-##    &lt;fct&gt;   &lt;chr&gt; &lt;int&gt;
-##  1 MML     ML1       1
-##  2 MML     ML10      1
-##  3 MML     ML13      1
-##  4 MML     ML20      1
-##  5 MML     ML29      1
-##  6 MML     ML3       1
-##  7 MML     ML31      1
-##  8 MML     ML34      1
-##  9 MML     ML36      1
-## 10 MML     ML38      1
-## # … with 218 more rows</code></pre>
-<pre class="r"><code>res %&gt;% filter(nursery == &quot;RR&quot; &amp; name == &quot;M5&quot;)</code></pre>
-<pre><code>## # A tibble: 1 x 19
-##   nursery name  geno  date  source_lat source_lon mmm_5km estimate_hill
-##   &lt;fct&gt;   &lt;chr&gt; &lt;chr&gt; &lt;chr&gt;      &lt;dbl&gt;      &lt;dbl&gt; &lt;chr&gt;           &lt;dbl&gt;
-## 1 RR      M5    CM5   2020…       24.7      -80.9 29.7935          28.7
-## # … with 11 more variables: estimate_max &lt;dbl&gt;, estimate_ed50 &lt;dbl&gt;,
-## #   std_error_hill &lt;dbl&gt;, std_error_max &lt;dbl&gt;, std_error_ed50 &lt;dbl&gt;,
-## #   statistic_hill &lt;dbl&gt;, statistic_max &lt;dbl&gt;, statistic_ed50 &lt;dbl&gt;,
-## #   p_value_hill &lt;dbl&gt;, p_value_max &lt;dbl&gt;, p_value_ed50 &lt;dbl&gt;</code></pre>
 </div>
 <div id="what-is-the-range-in-thermal-tolerance-across-all-genotypes" class="section level1">
 <h1>What is the range in thermal tolerance across all genotypes?</h1>
