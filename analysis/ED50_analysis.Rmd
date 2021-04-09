@@ -98,6 +98,13 @@ res %>%
   summarize(ncoral = n_distinct(nursery, name),
             ngeno = n_distinct(geno)) %>%
   knitr::kable()
+
+res %>%
+  group_by(nursery, name) %>%
+  summarize(n = n()) %>%
+  arrange(-n)
+
+res %>% filter(nursery == "RR" & name == "M5")
 ```
 
 
