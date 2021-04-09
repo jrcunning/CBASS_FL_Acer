@@ -21,6 +21,7 @@ library(ggthemes)
 library(multcompView)
 library(ggpubr)
 library(mcr)
+library(cowplot)
 ```
 
 This document analyzes thermal tolerance metrics (ED50) derived from each coral genotype measured at each nursery on the R/V *Coral Reef II* in the summer and fall of 2020. ED50 values are analyzed for differences among nurseries, and effects of source colony location and temperature regime. For a subset of corals, ED50 values are compared to values obtained from the same genets at the same nurseries in spring 2020, in a separate, independent set of CBASS assays.
@@ -347,6 +348,25 @@ anova(mod)
 plot(emtrends(mod, specs = "nursery", var = "logSH"))
 ```
 
+# Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
+```{r, fig.width = 4, fig.height = 4}
+# Relationship between nursery MMM and average nursery ED50?
+nursmmm <- res.adj %>%
+  mutate(nursmmm = case_when(nursery == "MML" ~ 30.2694,
+                             nursery == "UM"  ~ 29.5412,
+                             nursery == "NSU" ~ 29.5344,
+                             nursery == "CRF" ~ 29.7307,
+                             nursery == "RR" ~ 29.7307,
+                             nursery == "FWC" ~ 29.9965))
+
+nursmmm %>%
+  group_by(nursery) %>%
+  summarize(nursmmm = mean(nursmmm), meaned50 = mean(estimate_ed50)) %>%
+  ggplot(aes(x = nursmmm, y = meaned50)) +
+  geom_label(aes(label = nursery))
+```
+
+There is no relationship between nursery MMM and average ED50.
 
 # Is thermal tolerance related to source colony latitude and longitude?
 ```{r}
@@ -374,56 +394,17 @@ cowplot::plot_grid(lat.plot, lon.plot, ncol = 2)
 
 # Is thermal tolerance related to source colony temperature regime?
 
-To test this hypothesis, we calculate maximum monthly mean (MMM) temperatures corresponding to each source colony location, using satellite SST products with both 9km and 5km resolution. 
+To test this hypothesis, we calculate maximum monthly mean (MMM) temperatures corresponding to each source colony location, using satellite SST data with 5km resolution. 
 
 ```{r, eval = TRUE}
-# Import 9km SST data
-sst9 <- tibble(
-  filename = list.files("data/sst_9km", full.names = TRUE),
-  data = map(filename, read_csv, col_names = c("yyyymm", "temp")),
-  coords = map(filename, ~ str_split_fixed(basename(.), "_", 4)),
-  lat = map_dbl(coords, ~ as.numeric(nth(., 3))),
-  lon = map_dbl(coords, ~ parse_number(nth(., 4)))
-) %>%
-  select(lat, lon, data)
-
-sst9 <- sst9 %>%
-  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
-  mutate(monthly_means = map(data, ~ group_by(., month) %>% summarize(mean = mean(temp))),
-         mmm_9km = map_dbl(monthly_means, ~ max(.$mean)),
-         minmm = map_dbl(monthly_means, ~ min(.$mean)),
-         totvar = map_dbl(data, ~ var(.$temp)),
-         sumvar = map_dbl(data, ~ filter(.,  month %in% c("07", "08", "09")) %>% 
-                            summarize(var = var(temp)) %>% pull(var)))
-
-# Join with results and sample metadata
-dft <- sst9 %>%
-  distinct(source_lat = lat, source_lon = lon, mmm_9km, minmm, totvar, sumvar) %>%
-  right_join(res.adj) %>%
-  mutate(mmm_5km = as.numeric(mmm_5km))
-
-# Test effect of MMM from 9km data
-mod9km <- lm(ed50_adj ~ mmm_9km, data = dft)
-anova(mod9km) %>%
-  tidy() %>%
-  knitr::kable()
-
 # Test effect of MMM from 5km data
-mod5km <- lm(ed50_adj ~ mmm_5km, data = dft)
+mod5km <- lm(ed50_adj ~ mmm_5km, data = res.adj)
 anova(mod5km) %>%
   tidy() %>%
   knitr::kable()
 
-# Plots
-mmm9.plot <- ggplot(dft, aes(x = mmm_9km, y = ed50_adj)) +
-  geom_point(size = 0.25) +
-  geom_smooth(method = "lm", se = FALSE) +
-  theme_few() +
-  theme(text = element_text(size = 10)) +
-  scale_x_continuous(labels = function(x) str_trim(x)) +
-  labs(x = "MMM (9 km)", y = NULL)
-
-mmm5.plot <- ggplot(dft, aes(x = mmm_5km, y = ed50_adj)) +
+# Plot
+mmm5.plot <- ggplot(res.adj, aes(x = as.numeric(mmm_5km), y = ed50_adj)) +
   geom_point(size = 0.25) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
@@ -431,23 +412,17 @@ mmm5.plot <- ggplot(dft, aes(x = mmm_5km, y = ed50_adj)) +
   scale_x_continuous(labels = function(x) str_trim(x)) +
   labs(x = "MMM (°C)", y = expression(paste(ED50[adj], " (°C)")))
 
-cowplot::plot_grid(mmm9.plot, mmm5.plot, ncol = 2)
-```
-
-```{r, include = FALSE, eval = FALSE, fig.width = 11, fig.height = 3}
-fig4 <- cowplot::plot_grid(lat.plot, lon.plot, mmm9.plot, mmm5.plot, nrow = 1,
-                   rel_widths = c(1.07,1,1,1), labels = "AUTO")
-ggsave(plot = fig4, filename = "output/fig4.png", width = 190, height = 50, units = "mm")
+mmm5.plot
 ```
 
 ```{r}
-mod <- lm(ed50_adj ~ source_lat * source_lon * mmm_9km * mmm_5km, data = dft)
+mod <- lm(ed50_adj ~ source_lat * source_lon * mmm_5km * nursmmm, data = nursmmm)
 anova(mod) %>%
   tidy() %>%
   knitr::kable()
 ```
 
-There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This is a pretty cool finding because it suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
+There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
 
 # Map the source locations of the most thermally tolerant genets
 ```{r, eval = TRUE, include = TRUE}
@@ -460,39 +435,43 @@ library("sf")
 
 world <- ne_countries(scale = "large", returnclass = "sf")
 top10plot <- ggplot(data = world) +
-  geom_sf(lwd = 0) +
+  geom_sf(lwd = 0, fill = "gray70") +
   coord_sf(xlim = c(-82.35, -79.75), ylim = c(24.3, 26.4), expand = FALSE) +
   geom_point(aes(x = source_lon, y = source_lat), data = res.adj, size = 0.1, color = "black", alpha = 0.5) +
-  geom_point(aes(x = source_lon, y = source_lat), data = top10, color = "red", size = 1.5, alpha = 1, pch = "X") +
+  geom_point(aes(x = source_lon, y = source_lat), data = top10, color = "red", size = 0.1, alpha = 1) +
   scale_x_continuous(breaks = seq(-82, -80, 1), labels = seq(-82, -80, 1)) +
   scale_y_continuous(breaks = seq(25, 26, 1), labels = seq(25, 26, 1)) +
   theme_few() +
   theme(text = element_text(size = 10),
         plot.margin = margin(6,3,6,6)) +
-  labs(y = "Latitude", x = "Longitude")
-top10plot
-newfig3 <- cowplot::plot_grid(lat.plot, lon.plot, mmm5.plot, top10plot, nrow = 2,
+  labs(y = "Latitude", x = "Longitude") +
+  geom_segment(aes(x = -81.475, y = 25.325, xend = source_lon, yend = source_lat), data = top10, lwd = 0.1, col = "red", alpha = 0.5)
+
+insetplot <- tibble(x = seq(-3, 3, length.out = 1001), y = dnorm(x, 0, 1)) %>%
+  mutate(area = x >= qnorm(0.9)) %>%
+  ggplot(aes(x = x, y = y)) +
+  geom_line(lwd = 0.1) +
+  geom_ribbon(aes(ymin = 0, ymax = y, fill = area)) +
+  scale_fill_manual(values = c(NA, "red")) +
+  theme_void() +
+  theme(plot.margin = margin(0,0,0,0)) +
+  annotate("text", x = -1, y = -0.1, label = expression("ED50" [adj]), size = 2, angle = 0) +   # 
+  coord_cartesian(clip = "off") +
+  theme(legend.position = "none")
+
+
+
+plot.with.inset <- ggdraw() +
+  draw_plot(top10plot) +
+  draw_plot(insetplot, x = 0.3, y = .55, width = .25, height = .2)
+  
+newfig3 <- cowplot::plot_grid(lat.plot, lon.plot, mmm5.plot, plot.with.inset, nrow = 2,
                    labels = "AUTO")
+newfig3
 ggsave("output/fig3.png", plot = newfig3, width = 90, height = 80, units = "mm")
 ```
 
-# Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
-```{r, fig.width = 4, fig.height = 4}
-# Relationship between nursery MMM and average nursery ED50?
-nursmmm <- dft %>%
-  group_by(nursery) %>%
-  summarize(meaned50 = mean(estimate_ed50)) %>%
-  mutate(nursmmm = case_when(nursery == "MML" ~ 30.2694,
-                             nursery == "UM"  ~ 29.5412,
-                             nursery == "NSU" ~ 29.5344,
-                             nursery == "CRF" ~ 29.7307,
-                             nursery == "RR" ~ 29.7307,
-                             nursery == "FWC" ~ 29.9965)) 
 
-nursmmm %>%
-  ggplot(aes(x = nursmmm, y = meaned50)) +
-  geom_label(aes(label = nursery))
-```
 
 # Thermal tolerance phenotype rarefaction curves
 ```{r}
@@ -513,8 +492,8 @@ rc <- res %>%
          mean = map_dbl(prop, mean))
 
 rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point(size = 1) +
+  geom_line(lwd = 0.3) +
+  geom_point(size = 0.5) +
   scale_y_continuous(limits = c(0, 1)) +
   theme_few() +
   theme(text = element_text(size = 8),
@@ -539,12 +518,12 @@ rc2 <- res.adj %>%
          mean = map_dbl(ntop25, mean))
 
 rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
-  geom_line() +
-  geom_point(size = 1) +
+  geom_line(lwd = 0.3) +
+  geom_point(size = 0.5) +
   scale_y_continuous(limits = c(0, 1)) +
   theme_few() +
   theme(text = element_text(size = 8),
-        legend.position = c(0.8, 0.4),
+        legend.position = c(0.7, 0.4),
         legend.key.size = unit(3, 'mm'),
         legend.spacing.y = unit(1, "mm")) +
   labs(x = "Genets sampled", 
@@ -553,7 +532,7 @@ rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
 
 fig4 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
 fig4
-ggsave("output/fig4.png", width = 114, height = 60, units = "mm")
+ggsave("output/fig4.png", width = 90, height = 50, units = "mm")
 ```
 
 
