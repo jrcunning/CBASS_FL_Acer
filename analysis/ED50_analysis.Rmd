@@ -642,7 +642,7 @@ rc2fig <- ggplot(rc2, aes(x = n, y = mean, color = nursery)) +
 
 fig4 <- cowplot::plot_grid(rc1fig, rc2fig, ncol = 2, labels = "AUTO")
 fig4
-ggsave("output/fig4.png", width = 90, height = 50, units = "mm")
+ggsave("output/fig4.png", width = 114, height = 50, units = "mm")
 
 rc %>%
   group_by(nursery) %>%
