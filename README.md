@@ -7,8 +7,7 @@ This repository contains data and code to accompany the manuscript titled
 
 by **Ross Cunning** and co-authors
 
-In this manuscript, we describe the application of coral bleaching automated stress systems (CBASS) to measure the thermal tolerance of 228 colonies of *Acropora cervicornis* across six coral nurseries spanning Florida's coral reef. Quantitative metrics for each colony's thermal tolerance are derived using the Fv/Fm ED50, and variation in heat tolerance is analyzed with respect to genetic and environmental effects.
-
+In this manuscript, we describe the application of coral bleaching automated stress systems (CBASS) to measure the thermal tolerance of 228 colonies of *Acropora cervicornis* across six coral nurseries spanning Florida's coral reef. Quantitative metrics for each colony's thermal tolerance are derived using the Fv/Fm ED50, and variation in heat tolerance is analyzed with respect to genetic and environmental effects. A front page for this repository can be accessed at [jrcunning.github.io/CBASS_FL_Acer/index.html](jrcunning.github.io/CBASS_FL_Acer/index.html).
 
 #### Repository contents:
 
