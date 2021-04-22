@@ -12,21 +12,28 @@ In this manuscript, we describe the application of coral bleaching automated str
 
 #### Repository contents:
 
+* **analysis/:** 
+    + CBASS_\*.Rmd: Analysis of CBASS experiments at each nursery and timepoint. These RMarkdown documents contain code to import and analyze temperature and Fv/Fm data from each CBASS experiment, and fit dose response curves for each coral. Knitted HTML outputs detailing each CBASS run are linked here:
+        + [CBASS_NSU.html](analysis/CBASS_NSU.html)
+        + [CBASS_UM.html](analysis/CBASS_UM.html)
+        + [CBASS_CRF.html](analysis/CBASS_CRF.html)
+        + [CBASS_RRT.html](analysis/CBASS_RRT.html)
+        + [CBASS_FWC.html](analysis/CBASS_FWC.html)
+        + [CBASS_MML.html](analysis/CBASS_MML.html)
+        + [CBASS_Jun2020.html](analysis/CBASS_Jun2020.html)
+    + [ED50_analysis.Rmd](analysis/ED50_analysis.html)
+    + HOBO_calibration.Rmd:
+    
 * **data/raw:** Contains raw temperature and photophysiological data collected during CBASS experiments. There is one sub-directory for each CBASS experiment run, with the date of the experiment in the directory name. Each of these directories contains the following files:
     + **\*/PAM/:** Raw chlorophyll fluorescence data exported from the Walz DIVING PAM II
     + **\*/temperature/:**
+    
 * **data/raw/hobo_calibration:**
+
 * **data/processed:**
+
 * **data/program_files:**
     
-* **analysis/:** 
-    + *CBASS_CRF.Rmd*: Analysis of CBASS experiment at CRF nursery
-    + *CBASS_FWC.Rmd*: Analysis of CBASS experiment at FWC nursery
-    + *CBASS_MML.Rmd*: Analysis of CBASS experiment at MML nursery
-    + *CBASS_NSU.Rmd*: Analysis of CBASS experiment at NSU nursery
-    + *CBASS_RRT.Rmd*: Analysis of CBASS experiment at RR nursery
-    + *CBASS_UM.Rmd*: Analysis of CBASS experiment at UM nursery
-    + *CBASS_Jun2020.Rmd*: Analysis of CBASS experiment in June 2020
-    + *ED50_analysis.Rmd*:
+
 
 * **output/:** 
