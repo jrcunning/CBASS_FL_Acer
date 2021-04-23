@@ -452,35 +452,6 @@ corfig
 
 Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 31 genotypes in this subset were present at only two (n=18) or three nurseries (n=13), so the low replication for each genotype is definitely a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
 
-
-```{r, include = FALSE, eval = FALSE}
-# Is thermal tolerance related to symbiont density?
-
-sh <- read_csv("data/processed/acer_SH_data.csv") %>%
-  clean_names() %>%
-  filter(species == "Acer") %>%
-  mutate(nursery = tolower(nursery)) %>%
-  rename(name = genotype) %>%
-  left_join(res.adj, sh, by = c("nursery", "name")) %>%
-  mutate(a_acer = replace_na(a_acer, 0),
-         d_acer = replace_na(d_acer, 0),
-         totSH = a_acer + d_acer,
-         logSH = log10(totSH)) %>%
-  filter(nursery != "rrt")
-
-ggplot(sh, aes(x = logSH, y = estimate_ed50)) + 
-  geom_point() +
-  geom_smooth(method = "lm", se = FALSE)
-
-ggplot(sh, aes(x = logSH, y = estimate_ed50, color = nursery)) + 
-  geom_point() +
-  geom_smooth(method = "lm", se = FALSE)
-
-mod <- lm(estimate_ed50 ~ logSH * nursery, data = sh)
-anova(mod)
-plot(emtrends(mod, specs = "nursery", var = "logSH"))
-```
-
 # Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
 ```{r, fig.width = 4, fig.height = 4}
 # Relationship between nursery MMM and average nursery ED50?
@@ -500,6 +471,32 @@ nursmmm %>%
 ```
 
 There is no relationship between nursery MMM and average ED50.
+
+# Is thermal tolerance related to symbiont density?
+```{r, fig.width = 4.5, fig.height = 3}
+sh <- read_csv("data/processed/acer_SH_data.csv") %>%
+  clean_names() %>%
+  filter(species == "Acer") %>%
+  rename(name = genotype) %>%
+  left_join(res.adj, sh, by = c("nursery", "name")) %>%
+  mutate(a_acer = replace_na(a_acer, 0),
+         d_acer = replace_na(d_acer, 0),
+         totSH = a_acer + d_acer,
+         logSH = log10(totSH))
+
+# ggplot(sh, aes(x = logSH, y = estimate_ed50)) + 
+#   geom_point(aes(color = nursery)) +
+#   geom_smooth(method = "lm", se = FALSE)
+
+ggplot(sh, aes(x = logSH, y = ed50_adj, color = nursery)) + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_few() +
+  labs(x = "log10 symbiont to host cell ratio", y = "Adjusted ED50 (°C)")
+
+mod <- lm(ed50_adj ~ logSH, data = sh)
+anova(mod) %>% knitr::kable()
+```
 
 # Is thermal tolerance related to source colony latitude and longitude?
 ```{r, fig.height = 3}
