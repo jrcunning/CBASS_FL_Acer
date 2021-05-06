@@ -91,6 +91,16 @@ res <- res.all %>%
 # Recode nursery abbreviations
 res <- res %>%
   mutate(nursery = recode(nursery, mote = "MML", fwc = "FWC", rrt = "RR", crf = "CRF", um = "UM", nsu = "NSU"))
+
+# Import symbiont qPCR data
+sh <- read_csv("data/processed/acer_SH_data.csv") %>%
+  clean_names() %>%
+  filter(species == "Acer") %>%
+  rename(name = genotype) %>%
+  mutate(a_acer = replace_na(a_acer, 0),
+         d_acer = replace_na(d_acer, 0),
+         totSH = a_acer + d_acer,
+         logSH = log10(totSH))
 ```
 
 # How many coral colonies and unique genotypes were tested?
@@ -273,14 +283,21 @@ nurs.stats <- left_join(nurs.stats, lett)
 
 # Raincloud plot
 source("https://raw.githubusercontent.com/datavizpyr/data/master/half_flat_violinplot.R")
-nurs.fig <- ggplot(res, aes(x = nursery, y = estimate_ed50, fill = nursery, group = nursery)) +
+res2 <- res %>%
+  full_join(sh, by = c("nursery", "name")) %>%
+  mutate(dominant = case_when(d_acer > a_acer ~ "D", a_acer > d_acer ~ "A", TRUE ~ "A")) %>%
+  mutate(nursery = factor(nursery, levels = c("MML", "FWC", "RR", "CRF", "UM", "NSU")))
+nurs.fig <- res2 %>%
+  ggplot(aes(x = nursery, y = estimate_ed50, fill = nursery, group = nursery)) +
   geom_hline(aes(yintercept = mean(estimate_ed50)), lty = 2, col = "gray") +
   geom_flat_violin(position = position_nudge(x = 0.2, y = 0), 
                    adjust = 1, width = 2, alpha = 0.7, lwd = 0) +
   geom_boxplot(position = position_nudge(x = 0.2, y = 0), width = 0.1,
                outlier.shape = NA, alpha = 1, lwd = 0.25) +
-  geom_point(aes(color = nursery), alpha = 0.7, size = 1,
+  geom_point(data = filter(res2, dominant == "A"), aes(color = nursery), alpha = 0.7, size = 0.5,
              position = position_jitter(width = 0.075)) +
+  geom_point(data = filter(res2, dominant == "D"), size = 0.9, shape = 3, 
+             color = "black", fill = "black", position = position_nudge(x = -0.08)) +
   geom_point(data = nurs.stats, aes(x = nursery, y = mean), inherit.aes = FALSE,
              position = position_nudge(x = 0, y = 0), size = 1, pch = 5) +
   geom_errorbar(data = nurs.stats, inherit.aes = FALSE, width = 0, lwd = 0.25,
@@ -289,8 +306,6 @@ nurs.fig <- ggplot(res, aes(x = nursery, y = estimate_ed50, fill = nursery, grou
   geom_text(data = nurs.stats, aes(y = 37.5, label = group), size = 2) +
   geom_text(data = nurs.stats, aes(y = 37.5, label = paste("n=", n)), nudge_x = 0.2, size = 2) +
   coord_flip() +
-  scale_size(range = c(0.5, 3)) +
-  scale_shape_manual(values = c(21, 22, 23, 24, 25)) +
   theme_few() +
   theme(text = element_text(size = 10),
         axis.title.y = element_blank()) +
@@ -474,19 +489,14 @@ There is no relationship between nursery MMM and average ED50.
 
 # Is thermal tolerance related to symbiont density?
 ```{r, fig.width = 4.5, fig.height = 3}
-sh <- read_csv("data/processed/acer_SH_data.csv") %>%
-  clean_names() %>%
-  filter(species == "Acer") %>%
-  rename(name = genotype) %>%
-  left_join(res.adj, sh, by = c("nursery", "name")) %>%
-  mutate(a_acer = replace_na(a_acer, 0),
-         d_acer = replace_na(d_acer, 0),
-         totSH = a_acer + d_acer,
-         logSH = log10(totSH))
-
-# ggplot(sh, aes(x = logSH, y = estimate_ed50)) + 
+# ggplot(sh, aes(x = logSH, y = estimate_ed50)) +
 #   geom_point(aes(color = nursery)) +
 #   geom_smooth(method = "lm", se = FALSE)
+
+# # How does the D colony stack up?
+# ggplot(sh, aes(x = nursery, y = ed50_adj, color = d_acer > 0)) + geom_point()
+# D_ed50 <- sh %>% filter(d_acer > 0) %>% pull(ed50_adj)
+# ecdf(sh$ed50_adj)(D_ed50)
 
 ggplot(sh, aes(x = logSH, y = ed50_adj, color = nursery)) + 
   geom_point() +
@@ -555,6 +565,111 @@ anova(mod) %>%
 ```
 
 There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
+
+```{r}
+# Import DHW data
+dhw <- tibble(
+  filename = list.files("data/dhw_yearmax_CoralTemp_V3.1", full.names = TRUE),
+  data = map(filename, read_csv, col_names = c("yyyymm", "dhw")),
+  coords = map(filename, ~ str_split_fixed(basename(.), "_", 6)),
+  lat = map_dbl(coords, ~ as.numeric(nth(., 5))),
+  lon = map_dbl(coords, ~ parse_number(nth(., 6)))) %>%
+  select(lat, lon, data) %>%
+  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
+  mutate(meandhw = map_dbl(data, ~ mean(.$dhw)),
+         meddhw  = map_dbl(data, ~ median(.$dhw)),
+         maxdhw  = map_dbl(data, ~ max(.$dhw)))
+
+# Import min temp data
+min <- tibble(
+  filename = list.files("data/sst_yearmin_CoralTemp_V3.1", full.names = TRUE),
+  data = map(filename, read_csv, col_names = c("yyyymm", "min")),
+  coords = map(filename, ~ str_split_fixed(basename(.), "_", 6)),
+  lat = map_dbl(coords, ~ as.numeric(nth(., 5))),
+  lon = map_dbl(coords, ~ parse_number(nth(., 6)))) %>%
+  select(lat, lon, data) %>%
+  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
+  mutate(meanmin = map_dbl(data, ~ mean(.$min)),
+         medmin  = map_dbl(data, ~ median(.$min)),
+         maxmin  = map_dbl(data, ~ max(.$min)),
+         minmin = map_dbl(data, ~min(.$min)))
+
+# Import max temp data
+max <- tibble(
+  filename = list.files("data/sst_yearmax_CoralTemp_V3.1", full.names = TRUE),
+  data = map(filename, read_csv, col_names = c("yyyymm", "max")),
+  coords = map(filename, ~ str_split_fixed(basename(.), "_", 6)),
+  lat = map_dbl(coords, ~ as.numeric(nth(., 5))),
+  lon = map_dbl(coords, ~ parse_number(nth(., 6)))) %>%
+  select(lat, lon, data) %>%
+  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
+  mutate(meanmax = map_dbl(data, ~ mean(.$max)),
+         medmax  = map_dbl(data, ~ median(.$max)),
+         maxmax  = map_dbl(data, ~ max(.$max)))
+       
+temp <- full_join(select(dhw, lat, lon, meandhw, meddhw, maxdhw),
+                  select(min, lat, lon, meanmin, medmin, maxmin, minmin))  
+temp <- full_join(temp, select(max, lat, lon, meanmax, medmax, maxmax))
+
+
+
+temp
+# Join with results and sample metadata
+dft <- distinct(temp) %>%
+  rename(source_lat = lat, source_lon = lon) %>%
+  full_join(res.adj)
+
+dft <- dft %>%
+  filter(meanmax > -30000)
+
+dft
+mod <- lm(ed50_adj ~ meanmin * meanmax * meandhw * source_lat * source_lon, data = dft)
+anova(mod)
+
+ggplot(dft, aes(x = meandhw, y = estimate_ed50)) + geom_point() + geom_smooth(method = "lm")
+
+# Test effect of DHW
+modmax <- lm(ed50_adj ~ maxmax * source_lon * source_lat, data = filter(max, max > -30000))
+anova(modmax) %>%
+  tidy() %>%
+  knitr::kable()
+
+max %>%
+  filter(max > -30000) %>%
+  ggplot(aes(x = medmax, y = ed50_adj)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+md <- distinct(res.adj, source_lat, source_lon)
+td <- distinct(temp, source_lat = lat, source_lon = lon)
+
+mdo <- anti_join(md, td)
+tdo <- anti_join(td, md)
+bo <- inner_join(md, td)
+
+sort(mdo$source_lat)
+sort(tdo$source_lat)
+sort(mdo$source_lon)
+sort(tdo$source_lon)
+```
+
+```{r}
+min
+max
+
+df <- full_join(min, max) %>%
+  mutate(range = maxmax - minmin)
+
+mod <- lm(ed50_adj ~ range * source_lat * source_lon, data = filter(df, range > 4))
+anova(mod)
+
+df %>%
+  filter(range > 4) %>%
+  ggplot(aes(x = range, y = ed50_adj)) + geom_point() + geom_smooth(method = "lm")
+```
+
+
 
 # Map the source locations of the most thermally tolerant genets
 ```{r, eval = TRUE, include = TRUE, fig.width = 3.5, fig.height = 3.5}
@@ -685,20 +800,25 @@ cor(dd3$nursvar, dd3$maxpwd)
 
 # Thermal tolerance phenotype rarefaction curves
 ```{r, fig.height = 4}
+#########
+# Population range -- 1st to 99th percentile across whole population
+pop <- qnorm(c(0.001, 0.999), mean(res.adj$ed50_adj), sd(res.adj$ed50_adj))
+poprange <- diff(pop)
 # ED50 rarefaction curves from each nursery
 sample_ed50s <- function(ed50s, n) {
-  s <- sample(ed50s, n)
-  rs <- diff(range(s))
-  rt <- diff(qnorm(c(0.01, 0.99), mean(ed50s), sd(ed50s)))
-  propr <- rs / rt
-  return(propr)
+  nursdist <- rnorm(1000, mean = mean(ed50s), sd = sd(ed50s))
+  s <- sample(nursdist, n)
+  samplerange <- diff(range(s))
+  proprange <- samplerange / poprange
+  return(proprange)
 }
 
-rc <- res %>%
-  select(nursery, estimate_ed50) %>%
-  nest(data = estimate_ed50) %>%
+rc <- res.adj %>%
+  filter(between(ed50_adj, pop[1], pop[2])) %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
   crossing(n = 1:25) %>%
-  mutate(prop = map2(data, n, ~ replicate(10000, sample_ed50s(.x$estimate_ed50, .y))),
+  mutate(prop = map2(data, n, ~ replicate(1000, sample_ed50s(.x$ed50_adj, .y))),
          mean = map_dbl(prop, mean))
 
 rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
@@ -708,7 +828,42 @@ rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
   theme_few() +
   theme(text = element_text(size = 8),
         legend.position = "none") +
-  labs(x = "Genets sampled", y = "Proportion of nursery\n ED50 range captured")
+  labs(x = "Genets sampled", y = "Proportion of population ED50 range captured")
+
+
+
+
+#########
+# Population range -- 1st to 99th percentile across whole population
+pop <- qnorm(c(0.01, 0.99), mean(res.adj$ed50_adj), sd(res.adj$ed50_adj))
+poprange <- diff(pop)
+f <- res.adj$ed50_adj[between(res.adj$ed50_adj, pop[1], pop[2])]
+fpop <- qnorm(c(0.01, 0.99), mean(f), sd(f))
+fpoprange <- diff(fpop)
+# ED50 rarefaction curves from each nursery
+sample_ed50s <- function(ed50s, n) {
+  s <- sample(ed50s, n)
+  samplerange <- diff(range(s))
+  proprange <- samplerange / fpoprange
+  return(proprange)
+}
+
+rc <- res.adj %>%
+  filter(between(ed50_adj, fpop[1], fpop[2])) %>%
+  select(nursery, ed50_adj) %>%
+  nest(data = ed50_adj) %>%
+  crossing(n = 1:25) %>%
+  mutate(prop = map2(data, n, ~ replicate(10000, sample_ed50s(.x$ed50_adj, .y))),
+         mean = map_dbl(prop, mean))
+
+rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
+  geom_line(lwd = 0.3) +
+  geom_point(size = 0.5) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_few() +
+  theme(text = element_text(size = 8),
+        legend.position = "none") +
+  labs(x = "Genets sampled", y = "Proportion of population ED50 range captured")
 
 
 
