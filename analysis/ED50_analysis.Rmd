@@ -800,62 +800,20 @@ cor(dd3$nursvar, dd3$maxpwd)
 
 # Thermal tolerance phenotype rarefaction curves
 ```{r, fig.height = 4}
-#########
-# Population range -- 1st to 99th percentile across whole population
-pop <- qnorm(c(0.001, 0.999), mean(res.adj$ed50_adj), sd(res.adj$ed50_adj))
-poprange <- diff(pop)
-# ED50 rarefaction curves from each nursery
-sample_ed50s <- function(ed50s, n) {
-  nursdist <- rnorm(1000, mean = mean(ed50s), sd = sd(ed50s))
-  s <- sample(nursdist, n)
-  samplerange <- diff(range(s))
-  proprange <- samplerange / poprange
-  return(proprange)
-}
-
-rc <- res.adj %>%
-  filter(between(ed50_adj, pop[1], pop[2])) %>%
-  select(nursery, ed50_adj) %>%
-  nest(data = ed50_adj) %>%
-  crossing(n = 1:25) %>%
-  mutate(prop = map2(data, n, ~ replicate(1000, sample_ed50s(.x$ed50_adj, .y))),
-         mean = map_dbl(prop, mean))
-
-rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
-  geom_line(lwd = 0.3) +
-  geom_point(size = 0.5) +
-  scale_y_continuous(limits = c(0, 1)) +
-  theme_few() +
-  theme(text = element_text(size = 8),
-        legend.position = "none") +
-  labs(x = "Genets sampled", y = "Proportion of population ED50 range captured")
-
-
-
-
-#########
-# Population range -- 1st to 99th percentile across whole population
-pop <- qnorm(c(0.01, 0.99), mean(res.adj$ed50_adj), sd(res.adj$ed50_adj))
-poprange <- diff(pop)
-f <- res.adj$ed50_adj[between(res.adj$ed50_adj, pop[1], pop[2])]
-fpop <- qnorm(c(0.01, 0.99), mean(f), sd(f))
-fpoprange <- diff(fpop)
-# ED50 rarefaction curves from each nursery
+# Number of population ED50adj deciles captured in sample
+adjed50dist <- rnorm(100000, meanadj, sdadj)
+deciles <- quantile(adjed50dist, probs = seq(0, 1, 0.1))
 sample_ed50s <- function(ed50s, n) {
   s <- sample(ed50s, n)
-  samplerange <- diff(range(s))
-  proprange <- samplerange / fpoprange
-  return(proprange)
+  prop_deciles <- length(unique(cut(s, deciles))) / 10
+  return(prop_deciles)
 }
-
 rc <- res.adj %>%
-  filter(between(ed50_adj, fpop[1], fpop[2])) %>%
   select(nursery, ed50_adj) %>%
   nest(data = ed50_adj) %>%
   crossing(n = 1:25) %>%
   mutate(prop = map2(data, n, ~ replicate(10000, sample_ed50s(.x$ed50_adj, .y))),
          mean = map_dbl(prop, mean))
-
 rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
   geom_line(lwd = 0.3) +
   geom_point(size = 0.5) +
@@ -863,8 +821,7 @@ rc1fig <- ggplot(rc, aes(x = n, y = mean, color = nursery)) +
   theme_few() +
   theme(text = element_text(size = 8),
         legend.position = "none") +
-  labs(x = "Genets sampled", y = "Proportion of population ED50 range captured")
-
+  labs(x = "Genets sampled", y = "Proportion of population\nED50 deciles captured")
 
 
 # Prob of any genos in top 25% of population
