@@ -1,25 +1,19 @@
-library(ggmap) 
 library(ggrepel)
 library(parzer)
 library(tidyverse)
 library(lubridate)
 library(drc)
 
-ggmap::register_google(key = readLines("google_api_key"))
+library("rnaturalearth")
+library("rnaturalearthdata")
+library("sf")
+
+
 
 # Download satellite map for Florida
-map_fl <- get_map(location = c(lon = -80.8, lat = 25.2), zoom = 8,
-                  source = "google", maptype = "satellite")
+world <- ne_countries(scale = "large", returnclass = "sf")
 
 # Set locations of nurseries
-# loc <- bind_rows("Nova\nSoutheastern\nUniversity\n(n = 37)" = c(lon = -80.097033, lat = 26.124533), 
-#                  "University\nof Miami\n(n = 41)" = c(lon = -80.109067, lat = 25.676267), 
-#                  "Coral\nRestoration\nFoundation\n(n = 44)" = c(lon = -80.43, lat = 24.99), 
-#                  "Reef Renewal\n(n = 42)" = c(lon = -80.45, lat = 24.97), 
-#                  "Florida FWC\n(n = 25)" = c(lon = -81.025117, lat = 24.667233), 
-#                  "Mote\nMarine Lab\n(n = 40)" = c(lon = -81.40009, lat = 24.56257), 
-#                  .id = "nursery")
-
 loc <- bind_rows("NSU\n(n = 37)" = c(lon = -80.097033, lat = 26.124533), 
                  "UM\n(n = 41)" = c(lon = -80.109067, lat = 25.676267), 
                  "CRF\n(n = 44)" = c(lon = -80.43, lat = 24.99), 
@@ -30,25 +24,33 @@ loc <- bind_rows("NSU\n(n = 37)" = c(lon = -80.097033, lat = 26.124533),
   mutate(nursery = fct_reorder(nursery, lon)) %>%
   arrange(nursery)
 
-# Add cruise dates for each nursery visited
-# loc <- loc %>%
-#   mutate("Cruise Date" = case_when(nursery == "Nova\nSoutheastern\nUniversity" ~ "Aug. 2020",
-#                                    TRUE ~ "Oct. 2020"))
-
 # Plot map with nursery labels
 set.seed(10)
-fig1a <- ggmap(map_fl, extent = "panel") +
-  geom_point(data = loc, aes(x = lon, y = lat), pch = 21, fill = "white", size = 2) +
-  scale_shape_manual(values = c(21, 24)) +
-  geom_label_repel(dat = loc, aes(label = nursery), label.padding = 0.125,
-                   fontface = "italic", size = 1.5,
+fig1a <- #ggmap(map_fl, extent = "panel") +
+  ggplot(data = world) +
+  geom_sf(lwd = 0, fill = "gray70") +
+  coord_sf(xlim = c(-82.6, -79.1), ylim = c(23.7, 26.9), expand = FALSE) +
+  geom_point(data = loc, aes(x = lon, y = lat), pch = 21, fill = "white", size = 1.5, stroke = 0.3) +
+  annotate(geom = "point", x = -80.1918, y = 25.7617, size = 0.5) +
+  annotate(geom = "text", x = -80.25, y = 25.85, label = "Miami", adj = 1, size = 2, fontface = "italic") +
+  annotate(geom = "point", x = -81.78, y = 24.5551, size = 0.5) +
+  annotate(geom = "text", x = -82.03, y = 24.67, label = "Key West", adj = 0.5, size = 2, fontface = "italic") +
+  geom_label_repel(dat = loc, aes(x = lon, y = lat, label = nursery, fill = nursery), 
+                   label.padding = 0.125,
+                   size = 2,
                    force = 50, segment.size = 0.3, segment.color = "black", min.segment.length = 0,
                    direction = "both", hjust = 0.5, vjust = 0.5, 
                    nudge_x = c(-0.6, -0.15, 0.05, 0.5, 0.5, 0.5), 
                    nudge_y = c(-0.5, -0.5, -0.5, -0.05, 0, 0.2)) +
+  scale_fill_manual(values = alpha(c("#F8766D", "#B79F00", "#00BA38", 
+                                     "#00BFC4", "#619CFF", "#F564E3"), 0.7)) +
+  scale_y_continuous(breaks = c(24, 25, 26), labels = c(24, 25, 26)) +
+  scale_x_continuous(breaks = c(-82, -81, -80), labels = c(-82, -81, -80)) +
   theme(legend.position = "none") +
-  theme(text = element_text(size = 10)) +
-  labs(x = "Latitude", y = "Longitude")
+  theme(text = element_text(size = 10),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA)) +
+  labs(y = "Latitude", x = "Longitude")
 fig1a
 
 
@@ -71,7 +73,7 @@ df <- myData %>% unnest(time, set_point)
 p1 <- ggplot(df, aes(x = time, y = set_point, group = factor(max_temp))) +
   geom_rect(aes(xmin = myTime + hm("07:00"), xmax = myTime + hm("09:00"), 
                 ymin = -Inf, ymax = Inf), fill = "lightgray", alpha = 0.9999) +
-  geom_line(aes(color = set_point), lwd = 1) +
+  geom_line(aes(color = set_point), lwd = 0.75) +
   scale_color_gradient2(midpoint=34, low="#4575b4", mid="#fee090", high="#d73027") +
   scale_x_datetime(breaks = "1 hour", expand = c(0,0),
                    labels = function(x) difftime(x, myTime + hm("07:00"), units = "hours")) +
@@ -86,9 +88,9 @@ p1 <- ggplot(df, aes(x = time, y = set_point, group = factor(max_temp))) +
 # Panel C: dose-response curve
 td <- tribble(
   ~max_temp, ~fvfm1, ~fvfm2,
-  30, 0.679, 0.694, 
-  32, 0.678, 0.685, 
-  33, 0.672, 0.658,
+  30, 0.674, 0.699, 
+  32, 0.671, 0.692, 
+  33, 0.678, 0.652,
   34, 0.589, 0.611,
   35, 0.465, 0.512,
   36, 0.351, 0.300, 
@@ -104,7 +106,7 @@ ndf <- data.frame(max_temp = seq(30, 38, 0.1)) %>%
 ed50 <- coef(mod)[3]
 
 p2 <- ggplot(td, aes(x = max_temp, y = fvfm)) +
-  geom_point(aes(color = max_temp), size = 2) +
+  geom_point(aes(color = max_temp), size = 1.5) +
   scale_color_gradient2(midpoint=34, low="#4575b4", mid="#fee090", high="#d73027") +
   geom_line(data = ndf) +
   geom_vline(aes(xintercept = ed50), lty = 2) +
@@ -121,7 +123,6 @@ p2 <- ggplot(td, aes(x = max_temp, y = fvfm)) +
 set.seed(90)
 fig1 <- cowplot::plot_grid(fig1a, p1, p2, ncol = 3,
                            labels = "AUTO")
-fig1
 
 ggsave("output/fig1.png", width = 180, height = 60, units = "mm")
 
