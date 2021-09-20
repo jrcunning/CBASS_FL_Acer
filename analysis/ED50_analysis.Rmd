@@ -214,8 +214,6 @@ tidy(summary(res$estimate_ed50)) %>%
 tidy(shapiro.test(res.adj$ed50_adj)) %>% 
   knitr::kable(caption = "Normality test for adjusted ED50 values")
 
-#ggsave("output/fig2.png", width = 172, height = 75, units = "mm")
-
 ```
 
 After adjusting for variation due to nursery location (i.e., environment), ED50 values are approximately normally distributed, with a mean of 35.98°C and standard deviation of 0.38°C. This is the variance due to genetic effects (and measurement error).
@@ -336,13 +334,18 @@ multi.adj <- multi.adj %>%
   summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
   right_join(multi.adj) %>%
   mutate(geno = fct_reorder(geno, geno_mean_ed50))
+
+# Count number of genotypes present at 2, 3, or 4 nurseries
+multi.adj %>%
+  count(geno, name = "Present at N nurseries") %>%
+  count(`Present at N nurseries`, name = "Number of genotypes")
   
 
 # Plot ED50adj by genotype
 ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, group = geno)) + 
   geom_point(size = 1.5, alpha = 0.75) + 
   geom_point(aes(y = geno_mean_ed50), pch = 1, color = "black", stroke = 0.25, size = 2)+
-  stat_summary(fun.data = mean_se, geom = "errorbar", color = "black", lwd = 0.25, width = 0.25) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", color = "black", lwd = 0.25, width = 0) +
   theme_few() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         axis.text = element_text(size = 8),
@@ -383,81 +386,26 @@ cors <- multi.adj %>%
   gatherpairs(FWC, CRF, RR, MML, UM)# %>%
   #filter(.xvalue < 37, .#yvalue < 37)
 
+cors
+
 corfig <- ggplot(cors, aes(x = .xvalue, y = .yvalue)) +
   geom_point() + 
   geom_abline(a = 0, b = 1, lty = 2) +
   stat_cor(size = 3) +
-  facet_grid(.ykey ~ .xkey) +
+  facet_grid(.ykey ~ .xkey, switch = "both") +
   theme_few() +
   labs(x = "Adjusted ED50 (°C)", y = "Adjusted ED50 (°C)")
 corfig
-ggsave(plot = corfig, filename = "output/figS4.png", width = 190, height = 190, units = "mm")
+
+corfig
+#ggsave(plot = corfig, filename = "output/figS4.png", width = 190, height = 190, units = "mm")
 
 
 
 
 ```
 
-```{r, eval = F, include = F}
-cors2 <- cors %>%
-  filter(.xkey != .ykey) %>%
-  distinct(.xvalue + .yvalue, .keep_all = TRUE) %>%
-  drop_na()
-ggplot(filter(cors2, .yvalue < 37), aes(x = .xvalue, y = .yvalue)) +
-  geom_point() + 
-  geom_smooth(method = deming) +
-  geom_abline(a = 0, b = 1, lty = 2) +
-  stat_cor(size = 3)
-cors2
-
-
-# heritability
-prior1=list(R = list(V = 1, nu = 0.002), G = list(G1 = list(V = 1, nu=0.002)))
-m1=MCMCglmm(ed50_adj~1, random=~geno, family = "gaussian", data = multi.adj,prior=prior1,nitt=50000,thin=1,burnin=1)
-H1=(m1$VCV[,1])/(m1$VCV[,1]+m1$VCV[,2])
-mean(H1) #  broad-sense heritability, 
-HPDinterval(H1) #95% CI for H2 estimate 
-
-
-
-# weighted cors
-# Get ED50s (adjusted for nursery effect) for genotypes present at multiple nurseries
-multi.adj <- res.adj %>%
-  # Filter genotypes present at more than one nursery
-  group_by(geno) %>%
-  filter(n_distinct(nursery) > 1) %>%
-  # If genotype run more than once at a nursery, use mean ed50 within nursery
-  group_by(geno, nursery) %>%
-  summarize(ed50_adj = mean(ed50_adj)) %>%
-  ungroup()
-# Reorder genotypes based on mean ed50 across nurseries
-multi.adj <- multi.adj %>%
-  group_by(geno) %>%
-  summarize(geno_mean_ed50 = mean(ed50_adj)) %>%
-  right_join(multi.adj) %>%
-  mutate(geno = fct_reorder(geno, geno_mean_ed50)) %>%
-  left_join(select(res.adj, geno, nursery, std_error_ed50))
-
-cors <- multi.adj %>%
-  select(nursery, geno, ed50_adj) %>%
-  pivot_wider(names_from = nursery, values_from = ed50_adj, values_fn = mean) %>%
-  gatherpairs(FWC, CRF, RR, MML)
-wts <- multi.adj %>%
-  select(nursery, geno, std_error_ed50) %>%
-  pivot_wider(names_from = nursery, values_from = std_error_ed50, values_fn = mean) %>%
-  gatherpairs(FWC, CRF, RR, MML)
-
-corfig <- ggplot(cors, aes(x = .xvalue, y = .yvalue)) +
-  geom_point() + 
-  geom_abline(a = 0, b = 1, lty = 2) +
-  stat_smooth(method = deming) +
-  facet_grid(.ykey ~ .xkey) +
-  theme_few() +
-  labs(x = "Adjusted ED50 (°C)", y = "Adjusted ED50 (°C)")
-corfig
-```
-
-Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 31 genotypes in this subset were present at only two (n=18) or three nurseries (n=13), so the low replication for each genotype is definitely a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
+Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 33 genotypes in this subset were present at only two (n=18), three (n=13), or four (n=1) nurseries, so the low replication for each genotype is a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
 
 # Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
 ```{r, fig.width = 4, fig.height = 4}
