@@ -113,24 +113,18 @@ res %>%
 
 # Number of unique genotypes shared across nurseries
 ```{r eval = FALSE}
-mat <- res %>%
+library(venn)    # install.packages("venn")
+df <- res %>%
   distinct(nursery, geno) %>%
-  mutate(present = TRUE) %>%
-  complete(nursery, geno, fill = list(present = FALSE)) %>%         # Complete implicit missing values
-  pivot_wider(names_from = "nursery", values_from = "present") %>%
-  mutate(n_nurs = rowSums(.[-1]))
+  nest(geno)
+df2 <- df$data %>%
+  map(., ~c(.$geno))
+names(df2) <- hi$nursery
 
-
-library(ggvenn)  # remotes::install_github("yanlinlin82/ggvenn")
-
-figs1 <- ggvenn(
-  mat[,2:5], 
-  show_percentage = FALSE,
-  fill_color = c("#F8766D", "#B79F00", "#00BA38", "#00BFC4", "#619CFF", "#F564E3"),
-  stroke_size = 0.5, set_name_size = 4
-)
-figs1
-ggsave("output/figS1.png", width = 90, height = 90, units = "mm")
+png(filename = "output/figS1.png", width = 90, height = 90, units = "mm", res = 300)
+venn(df2[c("UM", "CRF", "RR", "FWC", "MML")], 
+     zcolor = c("#619CFF", "#00BFC4", "#00BA38", "#B79F00", "#F8766D"))
+dev.off()
 ```
 
 
@@ -173,7 +167,7 @@ hist1 <- res %>%
   theme_few() +
   theme(text = element_text(size = 10)) +
   theme(legend.position = "none", legend.key.size = unit(0.25, "cm")) +
-  labs(x = "ED50 (°C)", y = "Count") +
+  labs(x = "ED50 (°C)", y = "Number of colonies") +
   guides(fill = guide_legend(reverse = TRUE)) + 
   xlim(qnorm(c(0.005, 0.9999), mean(res$estimate_ed50), sd(res$estimate_ed50)))
 
@@ -307,13 +301,11 @@ nurs.fig <- res2 %>%
   geom_text(data = nurs.stats, aes(y = 37.5, label = paste("n=", n)), nudge_x = 0.2, size = 2) +
   coord_flip() +
   theme_few() +
-  theme(text = element_text(size = 10),
-        axis.title.y = element_blank()) +
+  theme(text = element_text(size = 10)) + #,
+        #axis.title.y = element_blank()) +
   theme(legend.position = "none") +
-  labs(y = "ED50 (°C)", x = NA)
+  labs(y = "ED50 (°C)", x = "Nurseries")
 nurs.fig
-
-#ggsave("output/fig3.png", width = 120, height = 100, units = "mm")
 ```
 
 There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different set of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
@@ -388,7 +380,7 @@ gatherpairs <- function(data, ...,
 cors <- multi.adj %>%
   select(nursery, geno, ed50_adj) %>%
   pivot_wider(names_from = nursery, values_from = ed50_adj, values_fn = mean) %>%
-  gatherpairs(FWC, CRF, RR, MML)# %>%
+  gatherpairs(FWC, CRF, RR, MML, UM)# %>%
   #filter(.xvalue < 37, .#yvalue < 37)
 
 corfig <- ggplot(cors, aes(x = .xvalue, y = .yvalue)) +
@@ -518,12 +510,16 @@ anova(mod) %>%
 lat.plot <- ggplot(res.adj, aes(x = source_lat, y = ed50_adj)) +
   geom_point(size = 0.25) +
   geom_smooth(method = "lm", se = FALSE) +
+  scale_x_continuous(limits = c(24.45, 26.2), expand = c(0.08,0.08),
+                     breaks = c(25, 26), labels = c(25, 26)) +
   theme_few() +
   theme(text = element_text(size = 10)) +
   labs(x = "Latitude", y = expression(paste(ED50[adj], " (°C)")))
 
 lon.plot <- ggplot(res.adj, aes(x = source_lon, y = ed50_adj)) +
   geom_point(size = 0.25) +
+  scale_x_continuous(limits = c(-82.35, -79.75), expand = c(0, 0),
+                     breaks = c(-82, -81, -80), labels = c(-82, -81, -80)) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
   theme(text = element_text(size = 10)) +
@@ -551,7 +547,8 @@ mmm5.plot <- ggplot(res.adj, aes(x = as.numeric(mmm_5km), y = ed50_adj)) +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
   theme(text = element_text(size = 10)) +
-  scale_x_continuous(labels = function(x) str_trim(x)) +
+  scale_x_continuous(labels = function(x) str_trim(x),
+                     expand = c(0.075, 0.075)) +
   labs(x = "MMM (°C)", y = expression(paste(ED50[adj], " (°C)")))
 
 mmm5.plot
@@ -922,6 +919,7 @@ fig <- ggplot(ed50s2, aes(y = ed50_oct, x = ed50_jun)) +
   stat_cor(method = "spearman", label.y = 36.325, label.x = 34.85, size = 2) +
   geom_abline(intercept = 0, slope = 1, lty = 2, color = "black") +
   coord_fixed()  +
+  scale_x_continuous(breaks = c(35, 35.5, 36)) +
   labs(x = "ED50 (°C) measured in June", y = "ED50 (°C) measured in Oct.") +
   theme_few()
 fig
