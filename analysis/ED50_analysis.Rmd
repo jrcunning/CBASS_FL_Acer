@@ -25,7 +25,7 @@ library(cowplot)
 library(geodist)
 ```
 
-This document analyzes thermal tolerance metrics (ED50) derived from each coral genotype measured at each nursery on the R/V *Coral Reef II* in the summer and fall of 2020. ED50 values are analyzed for differences among nurseries, and effects of source colony location and temperature regime. For a subset of corals, ED50 values are compared to values obtained from the same genets at the same nurseries in spring 2020, in a separate, independent set of CBASS assays.
+This document analyzes thermal tolerance metrics (ED50) derived from 229 coral colonies measured at 6 coral nurseries on the R/V *Coral Reef II* in summer/fall 2020. ED50 values are analyzed for differences among nurseries, and effects of source colony location and temperature regime. For a subset of corals, ED50 values are compared to values obtained from the same genets at the same nurseries in June 2020, in a separate, independent set of CBASS assays.
 
 ```{r import_data}
 # Import cleaned datasets from each nursery
@@ -121,13 +121,14 @@ df2 <- df$data %>%
   map(., ~c(.$geno))
 names(df2) <- hi$nursery
 
+venn(df2[c("UM", "CRF", "RR", "FWC", "MML")], 
+     zcolor = c("#619CFF", "#00BFC4", "#00BA38", "#B79F00", "#F8766D"))
+
 png(filename = "output/figS1.png", width = 90, height = 90, units = "mm", res = 300)
 venn(df2[c("UM", "CRF", "RR", "FWC", "MML")], 
      zcolor = c("#619CFF", "#00BFC4", "#00BA38", "#B79F00", "#F8766D"))
 dev.off()
 ```
-
-
 
 ```{r test_geno_effect, eval = FALSE, include = FALSE}
 # Do different genotypes have different thermal tolerance?
@@ -152,13 +153,6 @@ anova(mod_nogeno, mod_geno)
 # What is the range in thermal tolerance across all colonies?
 
 ```{r ed50_histograms, fig.width = 11}
-# Basic histogram
-# ggplot(res, aes(x = estimate_ed50)) + 
-#   geom_histogram(binwidth = 0.1) +
-#   labs(x = "ED50 Tolerance (°C)", y = "Number of genotypes",
-#        title = "Histogram of ED50 values for all corals") +
-#   theme_few()
-
 # Histogram colored by nursery with density plot
 hist1 <- res %>%
   ggplot(aes(x = estimate_ed50)) + 
@@ -199,7 +193,6 @@ hist2 <- ggplot(res.adj, aes(x = ed50_adj)) +
   theme(text = element_text(size = 10)) +
   labs(x = "ED50 (°C) adjusted", y = "Percentage")
 
-
 # Combine histograms into multi-panel figure
 fig2 <- cowplot::plot_grid(
   hist1, 
@@ -213,10 +206,9 @@ tidy(summary(res$estimate_ed50)) %>%
 # Is adjusted distribution normal?
 tidy(shapiro.test(res.adj$ed50_adj)) %>% 
   knitr::kable(caption = "Normality test for adjusted ED50 values")
-
 ```
 
-After adjusting for variation due to nursery location (i.e., environment), ED50 values are approximately normally distributed, with a mean of 35.98°C and standard deviation of 0.38°C. This is the variance due to genetic effects (and measurement error).
+After adjusting for variation due to nursery location (i.e., environment), ED50 values are approximately normally distributed, with a mean of 35.98°C and standard deviation of 0.38°C. This is considered the variance due to genetic effects (and measurement error).
 
 # ED50 ± standard error for all colonies
 ```{r}
@@ -233,7 +225,6 @@ res %>%
   labs(x = "Colony", y = "ED50 ± SE (°C)") +
   coord_cartesian(ylim = c(34.75, 37.75))
 ```
-
 
 # How does thermal tolerance vary across nurseries?
 
@@ -306,7 +297,7 @@ nurs.fig <- res2 %>%
 nurs.fig
 ```
 
-There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different set of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
+There is variation among nurseries in average ED50 values. This could be due to different environmental conditions, and/or different sets of genotypes present, and/or confounding experimental effects. However, most of the variation in thermal tolerance is found *within* nurseries rather than between them. This means that each nursery tends to have genets with a wide range of thermal tolerance phenotypes.
 
 ```{r}
 # 3-panel Figure 2   
@@ -383,29 +374,21 @@ gatherpairs <- function(data, ...,
 cors <- multi.adj %>%
   select(nursery, geno, ed50_adj) %>%
   pivot_wider(names_from = nursery, values_from = ed50_adj, values_fn = mean) %>%
-  gatherpairs(FWC, CRF, RR, MML, UM)# %>%
-  #filter(.xvalue < 37, .#yvalue < 37)
-
-cors
+  gatherpairs(FWC, CRF, RR, MML, UM)
 
 corfig <- ggplot(cors, aes(x = .xvalue, y = .yvalue)) +
   geom_point() + 
   geom_abline(a = 0, b = 1, lty = 2) +
   stat_cor(size = 3) +
-  facet_grid(.ykey ~ .xkey, switch = "both") +
+  facet_grid(.ykey ~ .xkey) +
   theme_few() +
   labs(x = "Adjusted ED50 (°C)", y = "Adjusted ED50 (°C)")
 corfig
 
-corfig
 #ggsave(plot = corfig, filename = "output/figS4.png", width = 190, height = 190, units = "mm")
-
-
-
-
 ```
 
-Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 33 genotypes in this subset were present at only two (n=18), three (n=13), or four (n=1) nurseries, so the low replication for each genotype is a limitation. This study was not really designed to be able to answer this question, but the genotype swap experiment should hopefully be able to!
+Genotype is not a significant predictor of ED50 among coral genotypes tested at multiple nurseries. This could indicate that: 1) ED50 is plastic and genotype by environment interactions result in genotypes having different ED50 values at different nurseries, and/or 2) small sample sizes for each genotype limit statistical power to detect differences among genotypes. The 33 genotypes in this subset were present at only two (n=18), three (n=13), or four (n=1) nurseries, so the low replication for each genotype is also a limitation.
 
 # Is the average ED50 of corals at each nursery related to the nursery's MMM temperature?
 ```{r, fig.width = 4, fig.height = 4}
@@ -429,16 +412,8 @@ There is no relationship between nursery MMM and average ED50.
 
 # Is thermal tolerance related to symbiont density?
 ```{r, fig.width = 4.5, fig.height = 3}
-# ggplot(sh, aes(x = logSH, y = estimate_ed50)) +
-#   geom_point(aes(color = nursery)) +
-#   geom_smooth(method = "lm", se = FALSE)
-
-# # How does the D colony stack up?
-# ggplot(sh, aes(x = nursery, y = ed50_adj, color = d_acer > 0)) + geom_point()
-# D_ed50 <- sh %>% filter(d_acer > 0) %>% pull(ed50_adj)
-# ecdf(sh$ed50_adj)(D_ed50)
-
-ggplot(sh, aes(x = logSH, y = ed50_adj, color = nursery)) + 
+sh <- full_join(sh, res.adj)
+ggplot(sh, aes(x = logSH, y = ed50_adj)) + 
   geom_point() +
   geom_smooth(method = "lm", se = FALSE) +
   theme_few() +
@@ -502,119 +477,7 @@ mmm5.plot <- ggplot(res.adj, aes(x = as.numeric(mmm_5km), y = ed50_adj)) +
 mmm5.plot
 ```
 
-```{r}
-mod <- lm(ed50_adj ~ source_lat * source_lon * mmm_5km * nursmmm, data = nursmmm)
-anova(mod) %>%
-  tidy() %>%
-  knitr::kable()
-```
-
 There are no relationships between ED50 and source colony latitude, longitude, or MMM temperature. This suggests that thermally tolerant colonies are not restricted to specific locations, but can be found throughout the Florida reef tract.
-
-```{r}
-# Import DHW data
-dhw <- tibble(
-  filename = list.files("data/dhw_yearmax_CoralTemp_V3.1", full.names = TRUE),
-  data = map(filename, read_csv, col_names = c("yyyymm", "dhw")),
-  coords = map(filename, ~ str_split_fixed(basename(.), "_", 6)),
-  lat = map_dbl(coords, ~ as.numeric(nth(., 5))),
-  lon = map_dbl(coords, ~ parse_number(nth(., 6)))) %>%
-  select(lat, lon, data) %>%
-  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
-  mutate(meandhw = map_dbl(data, ~ mean(.$dhw)),
-         meddhw  = map_dbl(data, ~ median(.$dhw)),
-         maxdhw  = map_dbl(data, ~ max(.$dhw)))
-
-# Import min temp data
-min <- tibble(
-  filename = list.files("data/sst_yearmin_CoralTemp_V3.1", full.names = TRUE),
-  data = map(filename, read_csv, col_names = c("yyyymm", "min")),
-  coords = map(filename, ~ str_split_fixed(basename(.), "_", 6)),
-  lat = map_dbl(coords, ~ as.numeric(nth(., 5))),
-  lon = map_dbl(coords, ~ parse_number(nth(., 6)))) %>%
-  select(lat, lon, data) %>%
-  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
-  mutate(meanmin = map_dbl(data, ~ mean(.$min)),
-         medmin  = map_dbl(data, ~ median(.$min)),
-         maxmin  = map_dbl(data, ~ max(.$min)),
-         minmin = map_dbl(data, ~min(.$min)))
-
-# Import max temp data
-max <- tibble(
-  filename = list.files("data/sst_yearmax_CoralTemp_V3.1", full.names = TRUE),
-  data = map(filename, read_csv, col_names = c("yyyymm", "max")),
-  coords = map(filename, ~ str_split_fixed(basename(.), "_", 6)),
-  lat = map_dbl(coords, ~ as.numeric(nth(., 5))),
-  lon = map_dbl(coords, ~ parse_number(nth(., 6)))) %>%
-  select(lat, lon, data) %>%
-  mutate(data = map(data, ~ mutate(., year = str_sub(yyyymm, 1, 4), month = str_sub(yyyymm, 5, 6)))) %>%
-  mutate(meanmax = map_dbl(data, ~ mean(.$max)),
-         medmax  = map_dbl(data, ~ median(.$max)),
-         maxmax  = map_dbl(data, ~ max(.$max)))
-       
-temp <- full_join(select(dhw, lat, lon, meandhw, meddhw, maxdhw),
-                  select(min, lat, lon, meanmin, medmin, maxmin, minmin))  
-temp <- full_join(temp, select(max, lat, lon, meanmax, medmax, maxmax))
-
-
-
-temp
-# Join with results and sample metadata
-dft <- distinct(temp) %>%
-  rename(source_lat = lat, source_lon = lon) %>%
-  full_join(res.adj)
-
-dft <- dft %>%
-  filter(meanmax > -30000)
-
-dft
-mod <- lm(ed50_adj ~ meanmin * meanmax * meandhw * source_lat * source_lon, data = dft)
-anova(mod)
-
-ggplot(dft, aes(x = meandhw, y = estimate_ed50)) + geom_point() + geom_smooth(method = "lm")
-
-# Test effect of DHW
-modmax <- lm(ed50_adj ~ maxmax * source_lon * source_lat, data = filter(max, max > -30000))
-anova(modmax) %>%
-  tidy() %>%
-  knitr::kable()
-
-max %>%
-  filter(max > -30000) %>%
-  ggplot(aes(x = medmax, y = ed50_adj)) +
-  geom_point() +
-  geom_smooth(method = "lm")
-
-
-md <- distinct(res.adj, source_lat, source_lon)
-td <- distinct(temp, source_lat = lat, source_lon = lon)
-
-mdo <- anti_join(md, td)
-tdo <- anti_join(td, md)
-bo <- inner_join(md, td)
-
-sort(mdo$source_lat)
-sort(tdo$source_lat)
-sort(mdo$source_lon)
-sort(tdo$source_lon)
-```
-
-```{r}
-min
-max
-
-df <- full_join(min, max) %>%
-  mutate(range = maxmax - minmin)
-
-mod <- lm(ed50_adj ~ range * source_lat * source_lon, data = filter(df, range > 4))
-anova(mod)
-
-df %>%
-  filter(range > 4) %>%
-  ggplot(aes(x = range, y = ed50_adj)) + geom_point() + geom_smooth(method = "lm")
-```
-
-
 
 # Map the source locations of the most thermally tolerant genets
 ```{r, eval = TRUE, include = TRUE, fig.width = 3.5, fig.height = 3.5}
@@ -657,10 +520,10 @@ plot.with.inset <- ggdraw() +
   draw_plot(top10plot) +
   draw_plot(insetplot, x = 0.3, y = .55, width = .25, height = .2)
 
-plot.with.inset
   
 newfig3 <- cowplot::plot_grid(lat.plot, lon.plot, mmm5.plot, plot.with.inset, nrow = 2,
                    labels = "AUTO")
+newfig3
 ggsave("output/fig3.png", plot = newfig3, width = 90, height = 80, units = "mm")
 ```
 
@@ -668,12 +531,12 @@ ggsave("output/fig3.png", plot = newfig3, width = 90, height = 80, units = "mm")
 ```{r, fig.width = 4, fig.height = 8}
 nurs <- tribble(
   ~nursery, ~nurs_lat, ~nurs_lon, 
-  "MML", 24.56257, -81.40009,
-  "NSU", 26.124533, -80.097033,
-  "UM", 25.676261, -80.098681,
-  "CRF", 24.982398, -80.436548,
-  "RR", 24.98065, -80.438833,
-  "FWC", 24.667233, -81.025117
+  "MML", 24.56, -81.40,
+  "NSU", 26.12, -80.09,
+  "UM", 25.67, -80.09,
+  "CRF", 24.98, -80.43,
+  "RR", 24.98, -80.43,
+  "FWC", 24.66, -81.02
 )
 
 df <- res.adj %>%
@@ -702,46 +565,6 @@ maps
 
 ggsave("output/figS2.png", plot = maps, width = 80, height = 120, units = "mm")
 ```
-
-```{r, eval = FALSE, include = FALSE}
-library(geosphere)
-# distance from source colonies to nursery location
-dtc <- df %>% rowwise %>%
-  mutate(dist = distm(c(source_lon, source_lat), c(nurs_lon, nurs_lat))) %>%
-  group_by(nursery)
-ggplot(dtc, aes(x = dist)) + geom_histogram() + facet_wrap(~nursery)
-
-# pairwise distances among source colonies within each nursery
-dd <- df %>%
-  select(nursery, source_lon, source_lat) %>%
-  filter(source_lon > -82) %>%
-  nest(data = c(source_lon, source_lat)) %>%
-  mutate(pwd = map(data, geodist, measure = 'haversine'),
-         pwd2 = map(pwd, ~ .[lower.tri(.)]))
-
-unnest(dd, pwd2) %>%
-  ggplot(aes(x = pwd2)) + geom_histogram() + facet_wrap(~nursery)
-
-dd2 <- unnest(dd, pwd2) %>%
-  group_by(nursery) %>%
-  summarize(medpwd = median(pwd2, na.rm = T),
-            maxpwd = max(pwd2, na.rm = T),
-            meanpwd = mean(pwd2, na.rm = T))
-
-dd3 <- res.adj %>%
-  group_by(nursery) %>%
-  summarize(nursvar = var(estimate_ed50)) %>%
-  full_join(dd2)
-
-dd3 %>%
-  ggplot(aes(x = medpwd, y = nursvar)) + geom_point() + geom_smooth(method = "lm")
-  
-mod <- lm(nursvar ~ meanpwd, data = dd3)
-anova(mod)
-dd3
-cor(dd3$nursvar, dd3$maxpwd)
-```
-
 
 # Thermal tolerance phenotype rarefaction curves
 ```{r, fig.height = 4}
