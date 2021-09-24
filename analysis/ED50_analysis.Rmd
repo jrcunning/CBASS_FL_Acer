@@ -342,7 +342,9 @@ ggplot(multi.adj, aes(x = geno, y = ed50_adj, color = nursery, shape = nursery, 
         axis.text = element_text(size = 8),
         legend.position = c(0.15, 0.75),
         legend.text = element_text(size = 6),
-        legend.title = element_text(size = 8)) +
+        legend.title = element_text(size = 8),
+        legend.key.size = unit(0.3, "cm")) +
+  scale_color_manual(values = c("#F8766D", "#B79F00", "#00BA38", "#00BFC4", "#619CFF")) +
   labs(x = "Genotype", y = "Adjusted ED50 (°C)")
 
 ggsave(filename = "output/figS3.png", width = 120, height = 87, units = "mm")
