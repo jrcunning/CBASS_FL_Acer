@@ -1,6 +1,3 @@
-# CBASS_FL_Acer
-
-
 This repository contains data and code to accompany the manuscript titled
 
 ### Census of heat tolerance among Florida’s threatened staghorn corals finds resilient individuals throughout existing nursery populations
