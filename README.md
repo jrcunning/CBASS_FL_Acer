@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5526941.svg)](https://doi.org/10.5281/zenodo.5526941)
+
 This repository contains data and code to accompany the manuscript titled
 
 ### Census of heat tolerance among Florida’s threatened staghorn corals finds resilient individuals throughout existing nursery populations
