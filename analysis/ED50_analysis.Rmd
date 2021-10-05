@@ -40,7 +40,6 @@ gmd <- read_csv("data/genotype_metadata_raw.csv") %>%
          across(everything(), str_squish),
          across(ends_with("lat"), ~signif(parse_lat(.), 6)),             # parse latitude
          across(ends_with("lon"), ~signif(parse_lon(.), 6))) %>%        # parse longitude
-  mutate(ugeno = gsub(" ", "", ugeno)) %>%
   select(nursery, name = geno, source_lat, source_lon, MMM_5km)
 
 # Import names key
@@ -119,7 +118,7 @@ df <- res %>%
   nest(geno)
 df2 <- df$data %>%
   map(., ~c(.$geno))
-names(df2) <- hi$nursery
+names(df2) <- df$nursery
 
 venn(df2[c("UM", "CRF", "RR", "FWC", "MML")], 
      zcolor = c("#619CFF", "#00BFC4", "#00BA38", "#B79F00", "#F8766D"))
